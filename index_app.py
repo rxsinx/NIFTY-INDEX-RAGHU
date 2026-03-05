@@ -772,11 +772,6 @@ def main():
         ai_atr  = st.slider("ATR Period", 5, 30, 10, 1)
         ai_k    = st.slider("K-Means Clusters", 2, 5, 3, 1)
         st.caption("Auto-selects ATR multiplier per volatility regime")
-
-        st.markdown("---")
-        st.markdown("### 📐 Pattern Categories")
-        
-        st.markdown("---")
         st.markdown("### 📊 Index Trading Notes")
         st.markdown("""
 - No PE/PB/Div Yield (index metrics)
