@@ -303,6 +303,163 @@ def get_ai_st_dashboard(df_ai):
                 dist_pct=dist_pct, is_new_signal=is_new, streak=streak)
 
 
+
+
+# ============================================================================
+# VIX ANALYSIS
+# ============================================================================
+
+def fetch_vix_data(period: str = "1y") -> Optional[pd.DataFrame]:
+    """Fetch India VIX data aligned to the same period as the index."""
+    try:
+        vix = yf.Ticker("^INDIAVIX")
+        df  = vix.history(period=period)
+        if df.empty:
+            return None
+        df = df[["Open", "High", "Low", "Close", "Volume"]].dropna()
+        df = df.sort_index()
+        # Strip timezone for clean plotting
+        if df.index.tz is not None:
+            df.index = df.index.tz_localize(None)
+        return df
+    except Exception:
+        return None
+
+
+def create_vix_index_chart(index_df: pd.DataFrame, vix_df: pd.DataFrame,
+                            index_name: str) -> go.Figure:
+    """
+    Dual-axis chart: Index price (left) + India VIX (right).
+    Background shading shows VIX regimes (low/medium/high fear).
+    Bottom panel: rolling 20-day correlation between VIX returns and Index returns.
+    """
+    # Align on common dates
+    common = index_df.index.intersection(vix_df.index)
+    idx    = index_df.loc[common].tail(252)   # last ~1 year of trading days
+    vix    = vix_df.loc[common].tail(252)
+
+    # Daily returns for correlation
+    idx_ret = idx["Close"].pct_change()
+    vix_ret = vix["Close"].pct_change()
+    rolling_corr = idx_ret.rolling(20).corr(vix_ret)
+
+    fig = make_subplots(
+        rows=3, cols=1,
+        shared_xaxes=True,
+        vertical_spacing=0.07,
+        row_heights=[0.55, 0.25, 0.20],
+        subplot_titles=(
+            f"📊 {index_name} vs India VIX (Dual Axis)",
+            "India VIX Level — Fear Gauge",
+            "Rolling 20-Day Correlation (Index vs VIX)"
+        ),
+        specs=[[{"secondary_y": True}], [{"secondary_y": False}], [{"secondary_y": False}]]
+    )
+
+    # ── Row 1: Index line (left axis) ────────────────────────────────────────
+    fig.add_trace(go.Scatter(
+        x=idx.index, y=idx["Close"],
+        name=index_name,
+        line=dict(color="#2563eb", width=2),
+        hovertemplate=f"{index_name}: %{{y:,.0f}}<extra></extra>"
+    ), row=1, col=1, secondary_y=False)
+
+    # ── Row 1: VIX line (right axis) ────────────────────────────────────────
+    fig.add_trace(go.Scatter(
+        x=vix.index, y=vix["Close"],
+        name="India VIX",
+        line=dict(color="#dc2626", width=1.8, dash="dot"),
+        hovertemplate="VIX: %{y:.2f}<extra></extra>"
+    ), row=1, col=1, secondary_y=True)
+
+    # ── Row 1: VIX fear-zone shading ────────────────────────────────────────
+    vix_vals = vix["Close"]
+    for lo, hi, clr, label in [
+        (0,  15,   "rgba(22,163,74,0.06)",  "Low Fear (<15)"),
+        (15, 20,   "rgba(234,179,8,0.06)",  "Moderate (15–20)"),
+        (20, 25,   "rgba(249,115,22,0.07)", "Elevated (20–25)"),
+        (25, 9999, "rgba(220,38,38,0.08)",  "High Fear (>25)"),
+    ]:
+        fig.add_hrect(y0=lo, y1=min(hi, float(vix_vals.max()) * 1.1),
+                      fillcolor=clr, line_width=0,
+                      row=1, col=1, secondary_y=True)
+
+    # ── Row 2: VIX bar chart with color by level ────────────────────────────
+    vix_colors = []
+    for v in vix["Close"]:
+        if v < 15:   vix_colors.append("#16a34a")
+        elif v < 20: vix_colors.append("#ca8a04")
+        elif v < 25: vix_colors.append("#f97316")
+        else:        vix_colors.append("#dc2626")
+
+    fig.add_trace(go.Bar(
+        x=vix.index, y=vix["Close"],
+        name="VIX Level",
+        marker_color=vix_colors,
+        opacity=0.8,
+        hovertemplate="VIX: %{y:.2f}<extra></extra>"
+    ), row=2, col=1)
+
+    # VIX reference lines
+    for lvl, clr, lbl in [(15, "#16a34a", "15"), (20, "#ca8a04", "20"), (25, "#dc2626", "25")]:
+        fig.add_hline(y=lvl, line_dash="dash", line_color=clr, line_width=1,
+                      annotation_text=lbl, annotation_font=dict(size=9, color=clr),
+                      annotation_position="right", row=2, col=1)
+
+    # ── Row 3: Rolling correlation ──────────────────────────────────────────
+    corr_colors = ["#dc2626" if c < 0 else "#2563eb" for c in rolling_corr.fillna(0)]
+    fig.add_trace(go.Bar(
+        x=rolling_corr.index, y=rolling_corr,
+        name="20D Corr",
+        marker_color=corr_colors,
+        opacity=0.75,
+        hovertemplate="Corr: %{y:.3f}<extra></extra>"
+    ), row=3, col=1)
+    fig.add_hline(y=0,    line_dash="solid", line_color="#888",   line_width=1, row=3, col=1)
+    fig.add_hline(y=-0.5, line_dash="dash",  line_color="#dc2626",line_width=0.8,
+                  annotation_text="-0.5", annotation_font=dict(size=9), row=3, col=1)
+    fig.add_hline(y=0.5,  line_dash="dash",  line_color="#2563eb", line_width=0.8,
+                  annotation_text="+0.5", annotation_font=dict(size=9), row=3, col=1)
+
+    # ── Layout ───────────────────────────────────────────────────────────────
+    fig.update_layout(
+        height=900, hovermode="x unified", showlegend=True,
+        legend=dict(orientation="h", yanchor="bottom", y=1.01,
+                    xanchor="right", x=1,
+                    bgcolor="rgba(255,255,255,0.9)", bordercolor="#ddd", borderwidth=1),
+        **CHART_THEME
+    )
+    fig.update_xaxes(**AXIS_STYLE)
+    fig.update_yaxes(**AXIS_STYLE)
+    fig.update_yaxes(title_text=f"<b>{index_name}</b>", row=1, col=1, secondary_y=False,
+                     title_font=dict(color="#2563eb", size=11))
+    fig.update_yaxes(title_text="<b>VIX</b>", row=1, col=1, secondary_y=True,
+                     title_font=dict(color="#dc2626", size=11),
+                     showgrid=False)
+    fig.update_yaxes(title_text="VIX Level", title_font=dict(size=10), row=2, col=1)
+    fig.update_yaxes(title_text="Correlation", title_font=dict(size=10), row=3, col=1)
+    fig = _style_subplot_titles(fig)
+    return fig
+
+
+def get_vix_summary(vix_df: pd.DataFrame) -> dict:
+    """Return key VIX stats for the dashboard."""
+    cur  = float(vix_df["Close"].iloc[-1])
+    prev = float(vix_df["Close"].iloc[-2])
+    chg  = cur - prev
+    chg_pct = chg / prev * 100
+    ma20 = float(vix_df["Close"].rolling(20).mean().iloc[-1])
+    high52 = float(vix_df["Close"].rolling(min(252, len(vix_df))).max().iloc[-1])
+    low52  = float(vix_df["Close"].rolling(min(252, len(vix_df))).min().iloc[-1])
+
+    if cur < 15:   regime = "🟢 Low Fear"
+    elif cur < 20: regime = "🟡 Moderate"
+    elif cur < 25: regime = "🟠 Elevated"
+    else:          regime = "🔴 High Fear / Panic"
+
+    return dict(current=cur, change=chg, change_pct=chg_pct,
+                ma20=ma20, high52=high52, low52=low52, regime=regime)
+
 # ============================================================================
 # INDEX ANALYZER CLASS
 # ============================================================================
@@ -843,6 +1000,11 @@ def main():
             st.error(f"❌ Failed to load data for {index_name}.")
             return
 
+        # Fetch India VIX
+        with st.spinner("📡 Fetching India VIX…"):
+            vix_df = fetch_vix_data(period=period)
+            vix_ok = vix_df is not None and len(vix_df) >= 5
+
         with st.spinner("🔎 Running pattern detection…"):
             trend_pat    = analyzer.pattern_detector.detect_all_trend_patterns()
             reversal_pat = analyzer.pattern_detector.detect_all_reversal_patterns()
@@ -891,6 +1053,28 @@ def main():
         with v2: st.metric("Daily ATR %",   f"{stats['atr_pct']:.2f}%")
         with v3: st.metric("Daily Volume",  f"{stats['volume']/1e7:.2f} Cr"
                                              if stats["volume"] > 1e7 else f"{stats['volume']:.0f}")
+
+        # ── India VIX quick metrics ───────────────────────────────────────────
+        if vix_ok:
+            vix_sum = get_vix_summary(vix_df)
+            st.markdown("#### 😨 India VIX — Fear Gauge")
+            x1, x2, x3, x4, x5 = st.columns(5)
+            vix_delta = f"{vix_sum['change']:+.2f} ({vix_sum['change_pct']:+.2f}%)"
+            with x1: st.metric("India VIX",    f"{vix_sum['current']:.2f}", vix_delta)
+            with x2: st.metric("Regime",       vix_sum["regime"])
+            with x3: st.metric("VIX MA-20",    f"{vix_sum['ma20']:.2f}",
+                                "Above MA" if vix_sum["current"] > vix_sum["ma20"] else "Below MA")
+            with x4: st.metric("52W High",     f"{vix_sum['high52']:.2f}")
+            with x5: st.metric("52W Low",      f"{vix_sum['low52']:.2f}")
+            # Interpretation hint
+            if vix_sum["current"] > 20:
+                st.warning(f"⚠️ VIX at **{vix_sum['current']:.1f}** — elevated fear. "
+                           "Options premiums high; index often oversold near these levels.")
+            elif vix_sum["current"] < 13:
+                st.info(f"😴 VIX at **{vix_sum['current']:.1f}** — extreme complacency. "
+                        "Consider hedges; low VIX often precedes sharp moves.")
+            else:
+                st.success(f"✅ VIX at **{vix_sum['current']:.1f}** — normal range.")
 
         # ── Key Levels ────────────────────────────────────────────────────────
         st.markdown('<div class="sub-header">🎯 Key Technical Levels</div>', unsafe_allow_html=True)
@@ -1012,9 +1196,10 @@ def main():
 
         # ── Charts ────────────────────────────────────────────────────────────
         st.markdown('<div class="sub-header">📊 Charts & Forecasts</div>', unsafe_allow_html=True)
-        ct1, ct2, ct3, ct4, ct5 = st.tabs([
+        ct1, ct2, ct3, ct4, ct5, ct6 = st.tabs([
             "Price Action & Indicators", "Volume Profile",
-            "🤖 AI Adaptive Supertrend", "⛓️ MCMC Bayesian Forecast", "🎲 HMM Forecast",
+            "🤖 AI Adaptive Supertrend", "⛓️ MCMC Bayesian Forecast",
+            "🎲 HMM Forecast", "😨 VIX Analysis",
         ])
 
         with ct1:
@@ -1195,6 +1380,63 @@ def main():
                          f"({fc['expected_return']:.2f}% loss)")
             else:
                 st.info(f"📊 NEUTRAL — Range {fc['worst_case']:.0f}–{fc['best_case']:.0f}")
+
+        with ct6:
+            st.markdown("### 😨 India VIX vs Index Analysis")
+            if vix_ok:
+                vix_sum = get_vix_summary(vix_df)
+
+                # Key VIX stats row
+                col1, col2, col3, col4 = st.columns(4)
+                with col1:
+                    st.metric("Current VIX",  f"{vix_sum['current']:.2f}",
+                              f"{vix_sum['change']:+.2f} ({vix_sum['change_pct']:+.2f}%)")
+                with col2:
+                    st.metric("Fear Regime",  vix_sum["regime"])
+                with col3:
+                    st.metric("VIX MA-20",    f"{vix_sum['ma20']:.2f}",
+                              "⬆ Above MA" if vix_sum["current"] > vix_sum["ma20"] else "⬇ Below MA")
+                with col4:
+                    vix_range_pct = (vix_sum["current"] - vix_sum["low52"]) / (vix_sum["high52"] - vix_sum["low52"]) * 100
+                    st.metric("VIX Percentile (52W)", f"{vix_range_pct:.0f}th pct")
+
+                # VIX regime guide
+                st.markdown("""
+| VIX Level | Regime | Market Implication |
+|-----------|--------|--------------------|
+| < 15 | 🟢 Low Fear | Complacency — watch for reversal risk |
+| 15–20 | 🟡 Moderate | Normal market conditions |
+| 20–25 | 🟠 Elevated | Increased uncertainty, hedge positions |
+| > 25 | 🔴 High Fear | Panic / crash risk — potential buy zone |
+""")
+                # Chart
+                vix_chart = create_vix_index_chart(analyzer.data, vix_df, index_name)
+                st.plotly_chart(vix_chart, use_container_width=True)
+
+                # Correlation insight
+                common = analyzer.data.index.intersection(vix_df.index)
+                if len(common) > 22:
+                    idx_r = analyzer.data.loc[common, "Close"].pct_change().dropna()
+                    vix_r = vix_df.loc[common, "Close"].pct_change().dropna()
+                    common2 = idx_r.index.intersection(vix_r.index)
+                    corr_1m = idx_r.loc[common2].tail(22).corr(vix_r.loc[common2].tail(22))
+                    corr_3m = idx_r.loc[common2].tail(66).corr(vix_r.loc[common2].tail(66))
+                    corr_1y = idx_r.loc[common2].corr(vix_r.loc[common2])
+
+                    st.markdown("#### 📐 Correlation: Index Returns vs VIX Returns")
+                    cc1, cc2, cc3 = st.columns(3)
+                    with cc1: st.metric("1-Month Correlation", f"{corr_1m:.3f}")
+                    with cc2: st.metric("3-Month Correlation", f"{corr_3m:.3f}")
+                    with cc3: st.metric("1-Year Correlation",  f"{corr_1y:.3f}")
+
+                    if corr_1m < -0.4:
+                        st.success("📉 Strong negative correlation — VIX rising = Index falling (normal fear relationship).")
+                    elif corr_1m > 0.1:
+                        st.warning("⚠️ Unusual positive correlation — VIX and Index moving together (possible trend confusion).")
+                    else:
+                        st.info("🔄 Weak correlation — VIX and Index decoupled recently.")
+            else:
+                st.warning("⚠️ India VIX data unavailable. yfinance may not have `^INDIAVIX` at this time.")
 
         # ── Indicators Summary ────────────────────────────────────────────────
         st.markdown('<div class="sub-header">📋 Technical Indicators Summary</div>',
