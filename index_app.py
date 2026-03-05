@@ -262,43 +262,43 @@ class IndexAnalyzer:
         self.pattern_detector = None
 
     def fetch_data(self) -> bool:
-    try:
-        self.ticker = yf.Ticker(self.symbol)
-        self.data   = self.ticker.history(
-            period=self.period,
-            interval=self.interval
-        )
-
-        if self.data.empty:
-            st.error(f"No data for {self.symbol}")
+        try:
+            self.ticker = yf.Ticker(self.symbol)
+            self.data   = self.ticker.history(
+                period=self.period,
+                interval=self.interval
+            )
+        
+            if self.data.empty:
+                st.error(f"No data for {self.symbol}")
+                return False
+        
+            # Drop rows with any NaN in OHLCV (gaps at market open, bad ticks)
+            self.data = self.data.dropna(subset=["Open", "High", "Low", "Close", "Volume"])
+        
+            # Remove pre-market / post-market rows (keep only 9:15 AM – 3:30 PM IST)
+            if self.interval in ["1m", "5m", "15m", "30m", "1h"]:
+                self.data.index = self.data.index.tz_convert("Asia/Kolkata")
+                self.data = self.data.between_time("09:15", "15:30")
+                self.data.index = self.data.index.tz_localize(None)  # strip tz for clean plotting
+        
+            # Drop zero-volume bars (market closed / data error)
+            self.data = self.data[self.data["Volume"] > 0]
+        
+            # Sort index cleanly
+            self.data = self.data.sort_index()
+        
+            if len(self.data) < 20:
+                st.error(f"Not enough clean data bars ({len(self.data)}). Try a longer period.")
+                return False
+        
+            self.calculate_indicators()
+            self.pattern_detector = IndexPatternDetector(self.data)
+            return True
+        
+        except Exception as e:
+            st.error(f"Error: {e}")
             return False
-
-        # Drop rows with any NaN in OHLCV (gaps at market open, bad ticks)
-        self.data = self.data.dropna(subset=["Open", "High", "Low", "Close", "Volume"])
-
-        # Remove pre-market / post-market rows (keep only 9:15 AM – 3:30 PM IST)
-        if self.interval in ["1m", "5m", "15m", "30m", "1h"]:
-            self.data.index = self.data.index.tz_convert("Asia/Kolkata")
-            self.data = self.data.between_time("09:15", "15:30")
-            self.data.index = self.data.index.tz_localize(None)  # strip tz for clean plotting
-
-        # Drop zero-volume bars (market closed / data error)
-        self.data = self.data[self.data["Volume"] > 0]
-
-        # Sort index cleanly
-        self.data = self.data.sort_index()
-
-        if len(self.data) < 20:
-            st.error(f"Not enough clean data bars ({len(self.data)}). Try a longer period.")
-            return False
-
-        self.calculate_indicators()
-        self.pattern_detector = IndexPatternDetector(self.data)
-        return True
-
-    except Exception as e:
-        st.error(f"Error: {e}")
-        return False
                 
     def calculate_indicators(self):
         df = self.data
