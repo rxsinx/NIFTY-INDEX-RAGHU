@@ -347,8 +347,12 @@ class IndexAnalyzer:
             # Diagnostic: show what date range we actually got
             if len(self.data) > 0:
                 latest_bar = self.data.index[-1]
-                ist_now    = datetime.now(ist).replace(tzinfo=None)
-                hours_old  = (ist_now - latest_bar).total_seconds() / 3600
+                # Both must be tz-naive for subtraction (latest_bar was stripped above)
+                ist_now   = datetime.now(ist).replace(tzinfo=None)
+                # latest_bar may still be tz-aware if interval is daily — normalise it
+                if hasattr(latest_bar, "tzinfo") and latest_bar.tzinfo is not None:
+                    latest_bar = latest_bar.replace(tzinfo=None)
+                hours_old = (ist_now - latest_bar).total_seconds() / 3600
                 if hours_old > 28:
                     st.warning(
                         f"⚠️ Latest bar: {latest_bar.strftime('%d %b %Y %H:%M')} "
