@@ -318,8 +318,23 @@ class IndexAnalyzer:
                     # Last resort: strip whatever tz is there and re-localize as UTC→IST
                     self.data.index = self.data.index.tz_localize(None).tz_localize("UTC").tz_convert("Asia/Kolkata")
 
-                # Step 2: filter to NSE trading hours
-                self.data = self.data.between_time("09:15", "15:30")
+                # Step 2: filter pre/post market bars ONLY during live market hours.
+                # Outside market hours keep all bars so analysis works anytime.
+                import pytz as _pytz
+                _ist     = _pytz.timezone("Asia/Kolkata")
+                _now_ist = datetime.now(_ist)
+                _wday    = _now_ist.weekday()          # 0=Mon … 6=Sun
+                _hhmm    = _now_ist.hour * 60 + _now_ist.minute
+                _market_open  = 9 * 60 + 15            # 09:15
+                _market_close = 15 * 60 + 30           # 15:30
+                _is_market_hours = (
+                    _wday < 5 and                      # Mon–Fri
+                    _market_open <= _hhmm <= _market_close
+                )
+                if _is_market_hours:
+                    # Live session — strip pre/post market noise
+                    self.data = self.data.between_time("09:15", "15:30")
+                # else: market closed — keep all bars for full historical analysis
 
                 # Step 3: strip tz so Plotly renders cleanly
                 self.data.index = self.data.index.tz_localize(None)
