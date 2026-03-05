@@ -719,52 +719,6 @@ def create_volume_profile_chart(analyzer: IndexAnalyzer):
 # MCMC / HMM CHART HELPERS
 # ============================================================================
 
-def create_mcmc_fan_chart(fs: Dict, index_name: str) -> go.Figure:
-    import datetime as dt
-    dates = fs["forecast_dates"]
-    fan   = fs["fan_bands"]
-    paths = fs["sample_paths"]
-    cp    = fs["current_price"]
-    today = dates[0] - dt.timedelta(days=1)
-    all_d = [today] + list(dates)
-
-    def pre(band): return [cp] + list(band)
-
-    fig = go.Figure()
-    for i in range(min(60, paths.shape[0])):
-        fig.add_trace(go.Scatter(x=all_d, y=pre(paths[i]), mode="lines",
-                                  line=dict(color="rgba(59,130,246,0.06)", width=1),
-                                  showlegend=False, hoverinfo="skip"))
-    for lo, hi, clr, name in [
-        ("2.5", "97.5", "rgba(59,130,246,0.10)", "95% CI"),
-        ("10",  "90",   "rgba(59,130,246,0.18)", "80% CI"),
-        ("25",  "75",   "rgba(59,130,246,0.30)", "50% CI"),
-    ]:
-        fig.add_trace(go.Scatter(x=all_d + all_d[::-1],
-                                  y=pre(fan[hi]) + pre(fan[lo])[::-1],
-                                  fill="toself", fillcolor=clr,
-                                  line=dict(color="rgba(0,0,0,0)"),
-                                  name=name, hoverinfo="skip"))
-    fig.add_trace(go.Scatter(x=all_d, y=pre(fan["50"]), mode="lines",
-                              line=dict(color="#2563eb", width=3), name="Median"))
-    fig.add_hline(y=cp, line_dash="dot", line_color="#ca8a04",
-                  annotation_text=f"Current {cp:.0f}", annotation_position="left")
-    fig.add_hline(y=fs["target_price"], line_dash="dash", line_color="#16a34a",
-                  annotation_text=f"Target {fs['target_price']:.0f}",
-                  annotation_position="right")
-    fig.update_layout(
-        title=dict(text=f"<b>⛓️ MCMC Bayesian Forecast</b> — {index_name} ({fs['forecast_days']}-Day)",
-                   font=dict(size=14, color="#1e3a5f")),
-        xaxis_title="Date", yaxis_title="Index Level (₹)",
-        height=550, hovermode="x unified",
-        legend=dict(orientation="h", yanchor="bottom", y=1.01, xanchor="right", x=1,
-                    bgcolor="rgba(255,255,255,0.9)", bordercolor="#ddd", borderwidth=1),
-        **CHART_THEME
-    )
-    fig.update_xaxes(**AXIS_STYLE)
-    fig.update_yaxes(**AXIS_STYLE)
-    return fig
-
 
 def create_posterior_charts(mr: Dict, post: Dict) -> go.Figure:
     fig = make_subplots(rows=1, cols=2,
@@ -1161,7 +1115,6 @@ def main():
                 with k5: st.metric("Ann Drift",   f"{fs['ann_drift_mean']:+.1f}%")
                 with k6: st.metric("Ann Vol",     f"{fs['ann_volatility']:.1f}%")
 
-                st.plotly_chart(create_mcmc_fan_chart(fs, index_name), use_container_width=True)
                 st.plotly_chart(create_posterior_charts(mr, post), use_container_width=True)
 
                 st.markdown("#### ⚠️ Bayesian Risk Metrics")
