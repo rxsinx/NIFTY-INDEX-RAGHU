@@ -262,13 +262,15 @@ class IndexAnalyzer:
     def fetch_data(self) -> bool:
         try:
             import pytz
+            ist = pytz.timezone("Asia/Kolkata")
+            now_ist = datetime.now(ist)
+
+            # ── Always use a fresh Ticker (no cache) ──────────────────────────
             self.ticker = yf.Ticker(self.symbol)
 
             if self.interval in ["1m", "5m", "15m", "30m", "1h"]:
-                # FIX: use explicit start/end so today bars are always fetched.
-                # yfinance period= param is cached and often returns yesterday only.
-                ist = pytz.timezone("Asia/Kolkata")
-                now_ist = datetime.now(ist)
+                # Use start/end (not period=) — yfinance caches period= responses
+                # and often returns only up to yesterday for intraday intervals.
                 period_days = {
                     "5d": 5, "15d": 15, "30d": 30, "60d": 60,
                     "180d": 180, "730d": 730,
@@ -276,43 +278,73 @@ class IndexAnalyzer:
                 days_back = period_days.get(self.period, 60)
                 start_dt  = (now_ist - timedelta(days=days_back)).strftime("%Y-%m-%d")
                 end_dt    = (now_ist + timedelta(days=1)).strftime("%Y-%m-%d")
+
                 self.data = self.ticker.history(
-                    start=start_dt, end=end_dt,
+                    start=start_dt,
+                    end=end_dt,
                     interval=self.interval,
-                    prepost=False
+                    prepost=False,
+                    auto_adjust=True,
+                    back_adjust=False,
+                    repair=False,
                 )
             else:
-                # Daily / weekly — period= works fine
                 self.data = self.ticker.history(
                     period=self.period,
-                    interval=self.interval
+                    interval=self.interval,
+                    auto_adjust=True,
                 )
 
             if self.data.empty:
-                st.error(f"No data for {self.symbol}")
+                st.error(f"No data returned for {self.symbol}. Market may be closed or symbol invalid.")
                 return False
 
-            # Drop rows with any NaN in OHLCV
-            self.data = self.data.dropna(subset=["Open", "High", "Low", "Close", "Volume"])
-
-            # Keep only market hours: 9:15 AM - 3:30 PM IST
+            # ── Normalise the DatetimeIndex timezone ─────────────────────────
+            # yfinance can return: tz-naive, UTC, or IST — handle all three.
             if self.interval in ["1m", "5m", "15m", "30m", "1h"]:
                 idx = self.data.index
-                if idx.tz is None:
-                    self.data.index = idx.tz_localize(
-                        "Asia/Kolkata", ambiguous="infer", nonexistent="shift_forward"
-                    )
-                else:
-                    self.data.index = idx.tz_convert("Asia/Kolkata")
+
+                # Step 1: get everything into IST
+                try:
+                    if idx.tz is None:
+                        # Completely tz-naive — assume UTC then convert
+                        self.data.index = idx.tz_localize("UTC").tz_convert("Asia/Kolkata")
+                    elif str(idx.tz) in ("UTC", "utc", "Etc/UTC"):
+                        self.data.index = idx.tz_convert("Asia/Kolkata")
+                    else:
+                        # Already some tz (could be IST already)
+                        self.data.index = idx.tz_convert("Asia/Kolkata")
+                except Exception:
+                    # Last resort: strip whatever tz is there and re-localize as UTC→IST
+                    self.data.index = self.data.index.tz_localize(None).tz_localize("UTC").tz_convert("Asia/Kolkata")
+
+                # Step 2: filter to NSE trading hours
                 self.data = self.data.between_time("09:15", "15:30")
+
+                # Step 3: strip tz so Plotly renders cleanly
                 self.data.index = self.data.index.tz_localize(None)
 
-            # Drop zero-volume bars
+            # Drop NaN OHLCV rows and zero-volume bars
+            self.data = self.data.dropna(subset=["Open", "High", "Low", "Close", "Volume"])
             self.data = self.data[self.data["Volume"] > 0]
             self.data = self.data.sort_index()
 
+            # Diagnostic: show what date range we actually got
+            if len(self.data) > 0:
+                latest_bar = self.data.index[-1]
+                ist_now    = datetime.now(ist).replace(tzinfo=None)
+                hours_old  = (ist_now - latest_bar).total_seconds() / 3600
+                if hours_old > 28:
+                    st.warning(
+                        f"⚠️ Latest bar: {latest_bar.strftime('%d %b %Y %H:%M')} "
+                        f"({hours_old:.0f}h ago). Market may be closed or data delayed."
+                    )
+
             if len(self.data) < 20:
-                st.error(f"Not enough clean data bars ({len(self.data)}). Try a longer period.")
+                st.error(
+                    f"Not enough clean data bars ({len(self.data)}). "
+                    f"Try a longer period or switch to 1d timeframe."
+                )
                 return False
 
             self.calculate_indicators()
@@ -321,6 +353,8 @@ class IndexAnalyzer:
 
         except Exception as e:
             st.error(f"Error fetching data: {e}")
+            import traceback
+            st.code(traceback.format_exc(), language="python")
             return False
 
     def calculate_indicators(self):
