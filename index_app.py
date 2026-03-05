@@ -775,35 +775,7 @@ def main():
 
         st.markdown("---")
         st.markdown("### 📐 Pattern Categories")
-        st.markdown("""
-**Index Trend Patterns (7):**
-- ✅ Ascending Triangle
-- ✅ Descending Triangle
-- ✅ Symmetrical Triangle
-- ✅ Bull Flag / Bear Flag
-- ✅ Rising/Falling Wedge
-- ✅ Pennant (Bull/Bear)
-
-**Reversal Patterns (6):**
-- ✅ Head & Shoulders 🔻
-- ✅ Inverse H&S 🔄
-- ✅ Double Top 🔻
-- ✅ Double Bottom
-- ✅ Triple Top 🔻
-- ✅ Triple Bottom
-
-**Index-Specific (7):**
-- ✅ Range Breakout
-- ✅ Cup & Handle
-- ✅ Flat Base / Shelf
-- ✅ Mean Reversion
-- ✅ Elliott Wave 🌊
-- ✅ Wyckoff Accumulation
-- ✅ Wyckoff Distribution 🔻
-
-**TOTAL: 20 Index Patterns**
-        """)
-
+        
         st.markdown("---")
         st.markdown("### 📊 Index Trading Notes")
         st.markdown("""
