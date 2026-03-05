@@ -1,0 +1,2 @@
+# NIFTY-INDEX-RAGHU
+NIFTY &amp; BANKNIFTY Index Analyzer
