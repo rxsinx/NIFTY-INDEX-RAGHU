@@ -513,27 +513,27 @@ class IndexAnalyzer:
         chg_pct = chg / prev["Close"] * 100
 
         if self.interval in ["15m", "30m"]:
-        ret_1h  = (cur["Close"] / df["Close"].iloc[-4]  - 1) * 100 if len(df) >= 4  else None  # 4×15m = 1h
-        ret_1d  = (cur["Close"] / df["Close"].iloc[-26] - 1) * 100 if len(df) >= 26 else None  # ~1 session
-        ret_1w  = (cur["Close"] / df["Close"].iloc[-130]- 1) * 100 if len(df) >= 130 else None # ~5 sessions
-        return {
-            "current": float(cur["Close"]), 
-            "change": float(chg), 
-            "change_pct": float(chg_pct),
-            "high": float(cur["High"]), 
-            "low": float(cur["Low"]), 
-            "open": float(cur["Open"]),
-            "volume": float(cur["Volume"]),
-            "ret_1w": ret_1w, "ret_1m": ret_1d,   # relabel in UI
-            "ret_3m": ret_1h, "ret_ytd": None,
-           
-        }
+            ret_1h  = (cur["Close"] / df["Close"].iloc[-4]  - 1) * 100 if len(df) >= 4  else None  # 4×15m = 1h
+            ret_1d  = (cur["Close"] / df["Close"].iloc[-26] - 1) * 100 if len(df) >= 26 else None  # ~1 session
+            ret_1w  = (cur["Close"] / df["Close"].iloc[-130]- 1) * 100 if len(df) >= 130 else None # ~5 sessions
+            return {
+                "current": float(cur["Close"]), 
+                "change": float(chg), 
+                "change_pct": float(chg_pct),
+                "high": float(cur["High"]), 
+                "low": float(cur["Low"]), 
+                "open": float(cur["Open"]),
+                "volume": float(cur["Volume"]),
+                "ret_1w": ret_1w, "ret_1m": ret_1d,   # relabel in UI
+                "ret_3m": ret_1h, "ret_ytd": None,
+                   
+            }
             
         else 
-        ret_1w  = (cur["Close"] / df["Close"].iloc[-6]  - 1) * 100 if len(df) >= 6  else None
-        ret_1m  = (cur["Close"] / df["Close"].iloc[-22] - 1) * 100 if len(df) >= 22 else None
-        ret_3m  = (cur["Close"] / df["Close"].iloc[-66] - 1) * 100 if len(df) >= 66 else None
-        ret_ytd = None
+                ret_1w  = (cur["Close"] / df["Close"].iloc[-6]  - 1) * 100 if len(df) >= 6  else None
+                ret_1m  = (cur["Close"] / df["Close"].iloc[-22] - 1) * 100 if len(df) >= 22 else None
+                ret_3m  = (cur["Close"] / df["Close"].iloc[-66] - 1) * 100 if len(df) >= 66 else None
+                ret_ytd = None
         try:
             jan1 = df[df.index.year == df.index[-1].year].iloc[0]["Close"]
             ret_ytd = (cur["Close"] / jan1 - 1) * 100
