@@ -529,7 +529,7 @@ class IndexAnalyzer:
                    
             }
             
-        else 
+        else: 
                 ret_1w  = (cur["Close"] / df["Close"].iloc[-6]  - 1) * 100 if len(df) >= 6  else None
                 ret_1m  = (cur["Close"] / df["Close"].iloc[-22] - 1) * 100 if len(df) >= 22 else None
                 ret_3m  = (cur["Close"] / df["Close"].iloc[-66] - 1) * 100 if len(df) >= 66 else None
