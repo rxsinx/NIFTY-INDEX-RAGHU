@@ -59,15 +59,7 @@ st.markdown("""
 INDEX_MAP = {
     "NIFTY 50":       "^NSEI",
     "BANKNIFTY":      "^NSEBANK",
-    "NIFTY IT":       "^CNXIT",
-    "NIFTY FMCG":     "^CNXFMCG",
-    "NIFTY AUTO":     "^CNXAUTO",
-    "NIFTY PHARMA":   "^CNXPHARMA",
-    "NIFTY MIDCAP":   "^NSEMDCP50",
-    "NIFTY REALTY":   "^CNXREALTY",
-    "NIFTY METAL":    "^CNXMETAL",
-    "NIFTY ENERGY":   "^CNXENERGY",
-}
+    }
 
 # ── Volatility index map (approximate; yfinance availability varies) ──────────
 VIX_SYMBOL = "^INDIAVIX"
@@ -260,28 +252,54 @@ def get_ai_st_dashboard(df_ai):
 class IndexAnalyzer:
     """Comprehensive analyzer for NIFTY / BANKNIFTY and other NSE indices."""
 
-    def __init__(self, index_name: str, period: str = "1y"):
+    def __init__(self, index_name: str, period: str = "60d", interval: str = "1h"):
         self.index_name = index_name
         self.symbol     = INDEX_MAP.get(index_name, "^NSEI")
         self.period     = period
+        self.interval   = interval   # ← NEW
         self.data       = None
         self.ticker     = None
         self.pattern_detector = None
 
     def fetch_data(self) -> bool:
-        try:
-            self.ticker = yf.Ticker(self.symbol)
-            self.data   = self.ticker.history(period=self.period)
-            if self.data.empty:
-                st.error(f"No data for {self.symbol}")
-                return False
-            self.calculate_indicators()
-            self.pattern_detector = IndexPatternDetector(self.data)
-            return True
-        except Exception as e:
-            st.error(f"Error fetching data: {e}")
+    try:
+        self.ticker = yf.Ticker(self.symbol)
+        self.data   = self.ticker.history(
+            period=self.period,
+            interval=self.interval
+        )
+
+        if self.data.empty:
+            st.error(f"No data for {self.symbol}")
             return False
 
+        # Drop rows with any NaN in OHLCV (gaps at market open, bad ticks)
+        self.data = self.data.dropna(subset=["Open", "High", "Low", "Close", "Volume"])
+
+        # Remove pre-market / post-market rows (keep only 9:15 AM – 3:30 PM IST)
+        if self.interval in ["1m", "5m", "15m", "30m", "1h"]:
+            self.data.index = self.data.index.tz_convert("Asia/Kolkata")
+            self.data = self.data.between_time("09:15", "15:30")
+            self.data.index = self.data.index.tz_localize(None)  # strip tz for clean plotting
+
+        # Drop zero-volume bars (market closed / data error)
+        self.data = self.data[self.data["Volume"] > 0]
+
+        # Sort index cleanly
+        self.data = self.data.sort_index()
+
+        if len(self.data) < 20:
+            st.error(f"Not enough clean data bars ({len(self.data)}). Try a longer period.")
+            return False
+
+        self.calculate_indicators()
+        self.pattern_detector = IndexPatternDetector(self.data)
+        return True
+
+    except Exception as e:
+        st.error(f"Error: {e}")
+        return False
+                
     def calculate_indicators(self):
         df = self.data
         # Trend MAs
@@ -333,6 +351,19 @@ class IndexAnalyzer:
         df["S1"]    = 2 * df["Pivot"] - df["High"]
         df["R2"]    = df["Pivot"] + (df["High"] - df["Low"])
         df["S2"]    = df["Pivot"] - (df["High"] - df["Low"])
+
+        # Pivot Points — use rolling window for intraday
+        if self.interval in ["15m", "30m", "1h"]:
+                # Use previous session's H/L/C (last 26 bars ≈ one session)
+                window = 26
+                df["Pivot"] = (df["High"].shift(window) + df["Low"].shift(window) + df["Close"].shift(window)) / 3
+        else:
+                df["Pivot"] = (df["High"] + df["Low"] + df["Close"]) / 3
+
+        df["R1"] = 2 * df["Pivot"] - df["Low"]
+        df["S1"] = 2 * df["Pivot"] - df["High"]
+        df["R2"] = df["Pivot"] + (df["High"] - df["Low"])
+        df["S2"] = df["Pivot"] - (df["High"] - df["Low"])
 
         # Camarilla pivots
         df["Cam_R3"] = df["Close"] + (df["High"] - df["Low"]) * 1.1666
@@ -481,6 +512,24 @@ class IndexAnalyzer:
         chg  = cur["Close"] - prev["Close"]
         chg_pct = chg / prev["Close"] * 100
 
+        if self.interval in ["15m", "30m"]:
+        ret_1h  = (cur["Close"] / df["Close"].iloc[-4]  - 1) * 100 if len(df) >= 4  else None  # 4×15m = 1h
+        ret_1d  = (cur["Close"] / df["Close"].iloc[-26] - 1) * 100 if len(df) >= 26 else None  # ~1 session
+        ret_1w  = (cur["Close"] / df["Close"].iloc[-130]- 1) * 100 if len(df) >= 130 else None # ~5 sessions
+        return {
+            "current": float(cur["Close"]), 
+            "change": float(chg), 
+            "change_pct": float(chg_pct),
+            "high": float(cur["High"]), 
+            "low": float(cur["Low"]), 
+            "open": float(cur["Open"]),
+            "volume": float(cur["Volume"]),
+            "ret_1w": ret_1w, "ret_1m": ret_1d,   # relabel in UI
+            "ret_3m": ret_1h, "ret_ytd": None,
+           
+        }
+            
+        else 
         ret_1w  = (cur["Close"] / df["Close"].iloc[-6]  - 1) * 100 if len(df) >= 6  else None
         ret_1m  = (cur["Close"] / df["Close"].iloc[-22] - 1) * 100 if len(df) >= 22 else None
         ret_3m  = (cur["Close"] / df["Close"].iloc[-66] - 1) * 100 if len(df) >= 66 else None
@@ -763,8 +812,28 @@ def main():
         st.header("⚙️ Settings")
 
         index_name = st.selectbox("Select Index", list(INDEX_MAP.keys()), index=0)
-        period     = st.selectbox("Analysis Period",
-                                   ["1mo","3mo","6mo","1y","2y","5y"], index=3)
+        # In the sidebar section
+        timeframe = st.selectbox(
+            "Timeframe",
+            options=["15m", "30m", "1h", "1d", "1wk"],
+            index=2,
+            help="15m/30m/1h = intraday | 1d = daily | 1wk = weekly"
+        )
+
+        # Period options change based on timeframe
+        period_options = {
+            "15m":  ["5d", "15d", "30d", "60d"],
+            "30m":  ["5d", "15d", "30d", "60d"],
+            "1h":   ["15d", "30d", "60d", "180d", "730d"],
+            "1d":   ["1mo", "3mo", "6mo", "1y", "2y", "5y"],
+            "1wk":  ["6mo", "1y", "2y", "5y"],
+        }
+
+        period = st.selectbox(
+            "Lookback Period",
+            options=period_options[timeframe],
+            index=2
+        )
         show_patterns_on_chart = st.checkbox("Show Patterns on Chart", value=True)
 
         st.markdown("---")
@@ -786,7 +855,7 @@ def main():
     # ── Analysis ──────────────────────────────────────────────────────────────
     if analyze_btn:
         with st.spinner(f"📡 Fetching {index_name} data…"):
-            analyzer = IndexAnalyzer(index_name, period)
+            analyzer = IndexAnalyzer(index_name, period=period, interval=timeframe)
             ok = analyzer.fetch_data()
 
         if not ok:
@@ -1178,6 +1247,34 @@ def main():
 
         st.success(f"✅ Analysis complete for **{index_name}**")
 
+
+        st.markdown("### 📐 Multi-Timeframe Confluence")
+
+        mtf_col1, mtf_col2, mtf_col3 = st.columns(3)
+        
+        timeframes_to_check = {
+            "15m (Intraday)": ("60d", "15m"),
+            "1h  (Swing)":    ("60d", "1h"),
+            "1d  (Trend)":    ("1y",  "1d"),
+        }
+        
+        for col, (tf_label, (tf_period, tf_interval)) in zip(
+                [mtf_col1, mtf_col2, mtf_col3], timeframes_to_check.items()):
+            with col:
+                st.markdown(f"**{tf_label}**")
+                with st.spinner(f"Loading {tf_label}..."):
+                    tf_analyzer = IndexAnalyzer(index_name, period=tf_period, interval=tf_interval)
+                    if tf_analyzer.fetch_data():
+                        signal, _, score = tf_analyzer.get_trading_signal()
+                        rsi_val = tf_analyzer.data["RSI"].iloc[-1]
+                        macd_bull = tf_analyzer.data["MACD"].iloc[-1] > tf_analyzer.data["MACD_Signal"].iloc[-1]
+                        above_200 = tf_analyzer.data["Close"].iloc[-1] > tf_analyzer.data["SMA_200"].iloc[-1]
+        
+                        st.markdown(f"**{signal}** (score: {score})")
+                        st.markdown(f"RSI: `{rsi_val:.1f}`")
+                        st.markdown(f"MACD: {'🟢 Bull' if macd_bull else '🔴 Bear'}")
+                        st.markdown(f"200 SMA: {'✅ Above' if above_200 else '❌ Below'}")
+        
 
 if __name__ == "__main__":
     main()
