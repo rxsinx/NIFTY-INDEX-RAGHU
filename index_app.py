@@ -333,14 +333,26 @@ def create_vix_index_chart(index_df: pd.DataFrame, vix_df: pd.DataFrame,
     Background shading shows VIX regimes (low/medium/high fear).
     Bottom panel: rolling 20-day correlation between VIX returns and Index returns.
     """
+    # Normalise both indexes to tz-naive so intersection & arithmetic work
+    def _strip_tz(df):
+        if df.index.tz is not None:
+            df = df.copy()
+            df.index = df.index.tz_localize(None)
+        return df
+
+    index_df = _strip_tz(index_df)
+    vix_df   = _strip_tz(vix_df)
+
     # Align on common dates
     common = index_df.index.intersection(vix_df.index)
     idx    = index_df.loc[common].tail(252)   # last ~1 year of trading days
     vix    = vix_df.loc[common].tail(252)
 
-    # Daily returns for correlation
+    # Daily returns for correlation — must share the same (stripped) index
     idx_ret = idx["Close"].pct_change()
     vix_ret = vix["Close"].pct_change()
+    # Align explicitly before rolling corr
+    idx_ret, vix_ret = idx_ret.align(vix_ret, join="inner")
     rolling_corr = idx_ret.rolling(20).corr(vix_ret)
 
     fig = make_subplots(
@@ -962,26 +974,7 @@ def main():
         ai_k   = st.slider("K-Means Clusters", 2, 5, 3, 1)
         st.caption("Auto-selects ATR multiplier per volatility regime")
 
-        st.markdown("---")
-        st.markdown("### 📐 Pattern Categories")
-        st.markdown("""
-**Index Trend Patterns (7):**
-- ✅ Ascending / Descending Triangle
-- ✅ Symmetrical Triangle
-- ✅ Bull Flag / Bear Flag
-- ✅ Rising / Falling Wedge
-- ✅ Pennant (Bull/Bear)
-
-**Reversal Patterns (6):**
-- ✅ Head & Shoulders / Inverse H&S
-- ✅ Double Top / Double Bottom
-- ✅ Triple Top / Triple Bottom
-
-**Index-Specific (7):**
-- ✅ Range Breakout, Cup & Handle
-- ✅ Flat Base, Mean Reversion
-- ✅ Elliott Wave, Wyckoff Acc/Dist
-        """)
+        
         st.markdown("---")
         st.markdown("### 📊 Index Trading Notes")
         st.markdown("""
@@ -1414,14 +1407,21 @@ def main():
                 st.plotly_chart(vix_chart, use_container_width=True)
 
                 # Correlation insight
-                common = analyzer.data.index.intersection(vix_df.index)
+                # Strip tz from both before intersection
+                idx_data = analyzer.data.copy()
+                vix_data = vix_df.copy()
+                if idx_data.index.tz is not None:
+                    idx_data.index = idx_data.index.tz_localize(None)
+                if vix_data.index.tz is not None:
+                    vix_data.index = vix_data.index.tz_localize(None)
+                common = idx_data.index.intersection(vix_data.index)
                 if len(common) > 22:
-                    idx_r = analyzer.data.loc[common, "Close"].pct_change().dropna()
-                    vix_r = vix_df.loc[common, "Close"].pct_change().dropna()
-                    common2 = idx_r.index.intersection(vix_r.index)
-                    corr_1m = idx_r.loc[common2].tail(22).corr(vix_r.loc[common2].tail(22))
-                    corr_3m = idx_r.loc[common2].tail(66).corr(vix_r.loc[common2].tail(66))
-                    corr_1y = idx_r.loc[common2].corr(vix_r.loc[common2])
+                    idx_r = idx_data.loc[common, "Close"].pct_change().dropna()
+                    vix_r = vix_data.loc[common, "Close"].pct_change().dropna()
+                    idx_r, vix_r = idx_r.align(vix_r, join="inner")
+                    corr_1m = idx_r.tail(22).corr(vix_r.tail(22))
+                    corr_3m = idx_r.tail(66).corr(vix_r.tail(66))
+                    corr_1y = idx_r.corr(vix_r)
 
                     st.markdown("#### 📐 Correlation: Index Returns vs VIX Returns")
                     cc1, cc2, cc3 = st.columns(3)
@@ -1462,6 +1462,26 @@ def main():
         ])
         st.dataframe(ind_df, use_container_width=True, hide_index=True)
         st.success(f"✅ Analysis complete for **{index_name}**")
+        st.markdown("---")
+        st.markdown("### 📐 Pattern Categories")
+        st.markdown("""
+                        **Index Trend Patterns (7):**
+                        - ✅ Ascending / Descending Triangle
+                        - ✅ Symmetrical Triangle
+                        - ✅ Bull Flag / Bear Flag
+                        - ✅ Rising / Falling Wedge
+                        - ✅ Pennant (Bull/Bear)
+                        
+                        **Reversal Patterns (6):**
+                        - ✅ Head & Shoulders / Inverse H&S
+                        - ✅ Double Top / Double Bottom
+                        - ✅ Triple Top / Triple Bottom
+                        
+                        **Index-Specific (7):**
+                        - ✅ Range Breakout, Cup & Handle
+                        - ✅ Flat Base, Mean Reversion
+                        - ✅ Elliott Wave, Wyckoff Acc/Dist
+                                """)
 
 
 if __name__ == "__main__":
