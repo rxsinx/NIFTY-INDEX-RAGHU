@@ -583,32 +583,73 @@ def analyse_fai_regimes(df: pd.DataFrame) -> dict:
 
     Zones
     ─────
-    Bullish  : ST direction = +1  AND  FAI below its 20-day mean   → calm uptrend
-    Caution  : ST direction = +1  AND  FAI above its 20-day mean   → rally with fear, watch
-    Bearish  : ST direction = -1                                    → downtrend confirmed
-    Extreme  : ST direction = -1  AND  FAI in top 10% of range     → panic, potential reversal
+    HIGH FAI (panic spike) → Index has fallen hard + VIX spiked
+                           → BULLISH REVERSAL zone (buy the fear)
+
+    LOW FAI  (complacency) → Index high + VIX low = dangerous complacency
+                           → BEARISH CAUTION (distribution risk)
+
+    MID FAI  (transition)  → Market recovering or deteriorating
+                           → NEUTRAL / watch
+
+    Supertrend on FAI itself:
+      ST rising  (dir=+1) after HIGH FAI spike = confirmed recovery → STRONG BUY
+      ST falling (dir=-1) from LOW FAI         = distribution top  → STRONG SELL
     """
     st, direction, uf, lf, atr = _supertrend_on_series(
         df["FAI_High"], df["FAI_Low"], df["FAI_Close"], atr_period=10, multiplier=3.0)
 
     df = df.copy()
-    df["ST"]        = st
+    df["ST"]        = st_series
     df["ST_Dir"]    = direction
     df["FAI_MA20"]  = df["FAI"].rolling(20).mean()
+    df["FAI_MA50"]  = df["FAI"].rolling(50).mean()
     df["FAI_Std20"] = df["FAI"].rolling(20).std()
 
-    fai_90 = df["FAI"].quantile(0.90)
-    fai_10 = df["FAI"].quantile(0.10)
+    # Historical thresholds — use full history
+    fai_90 = df["FAI"].quantile(0.90)   # panic zone
+    fai_75 = df["FAI"].quantile(0.75)   # elevated fear
+    fai_25 = df["FAI"].quantile(0.25)   # low fear (complacency top)
+    fai_10 = df["FAI"].quantile(0.10)   # extreme complacency
 
+    # HMM regime labels
+    try:
+        hmm_labels, hmm_model, hmm_state_means = _fai_hmm_regimes(df["FAI"], n_states=3)
+        df["HMM_Regime"] = hmm_labels.values
+    except Exception:
+        # Fallback quantile
+        df["HMM_Regime"] = pd.cut(df["FAI"],
+                                   bins=[0, fai_25, fai_75, df["FAI"].max() * 1.01],
+                                   labels=["LOW", "MID", "HIGH"])
+        df["HMM_Regime"] = df["HMM_Regime"].astype(str)
+
+    # CORRECTED ZONE LOGIC
+    # ─────────────────────────────────────────────────────────────────────────
+    # HIGH FAI + ST turning UP  → PANIC BUY (strongest signal)
+    # HIGH FAI + ST still DOWN  → FEAR ACCUMULATION (watch for ST flip)
+    # MID FAI  + ST UP          → RECOVERY (bullish continuation)
+    # MID FAI  + ST DOWN        → DISTRIBUTION (bearish)
+    # LOW FAI  + ST DOWN        → COMPLACENCY TOP (sell / avoid longs)
+    # LOW FAI  + ST UP          → CALM BULL (safe to hold, not add)
+    # ─────────────────────────────────────────────────────────────────────────
+        
     def zone(row):
-        if row["ST_Dir"] == 1 and row["FAI"] <= row["FAI_MA20"]:
-            return "BULLISH"
-        elif row["ST_Dir"] == 1 and row["FAI"] > row["FAI_MA20"]:
-            return "CAUTION"
-        elif row["ST_Dir"] == -1 and row["FAI"] >= fai_90:
-            return "EXTREME FEAR"
-        else:
-            return "BEARISH"
+        hmm = str(row.get("HMM_Regime", "MID"))
+        std = int(row["ST_Dir"])
+        fai = float(row["FAI"])
+
+        if hmm == "HIGH" and std == 1:
+            return "🟢 PANIC BUY"           # Fear peak + ST flipped up = best buy
+        elif hmm == "HIGH" and std == -1:
+            return "🟡 FEAR — WATCH ST"     # Still falling but near bottom
+        elif hmm == "MID" and std == 1:
+            return "🟢 RECOVERY"            # Recovering from fear
+        elif hmm == "MID" and std == -1:
+            return "🔴 DISTRIBUTION"        # Topping out
+        elif hmm == "LOW" and std == -1:
+            return "🔴 COMPLACENCY TOP"     # Dangerous — no fear = market vulnerable
+        else:  # LOW + ST up
+            return "🟡 CALM BULL"           # Ok but watch for VIX spike warning
 
     df["Zone"] = df.apply(zone, axis=1)
 
@@ -616,94 +657,138 @@ def analyse_fai_regimes(df: pd.DataFrame) -> dict:
     current_zone = latest["Zone"]
     current_fai  = float(latest["FAI"])
     st_level     = float(latest["ST"])
-    fai_ma       = float(latest["FAI_MA20"])
+    fai_ma20     = float(latest["FAI_MA20"])
     fai_std      = float(latest["FAI_Std20"])
 
-    # Dynamic support / resistance bands from ST + std
-    bullish_zone_hi = fai_ma
-    bullish_zone_lo = fai_ma - 1.5 * fai_std
-    bearish_zone_lo = fai_ma
-    bearish_zone_hi = fai_ma + 2.0 * fai_std
+    # Threshold levels (dynamic from history)
+    panic_threshold       = fai_75           # above this = fear territory
+    capitulation_threshold= fai_90           # above this = extreme panic = buy zone
+    complacency_threshold = fai_25           # below this = danger zone (no fear)
+
+    # Bullish band = FAI > 75th pct (fear = buy zone)
+    bullish_zone_lo = panic_threshold
+    bullish_zone_hi = capitulation_threshold
+
+    # Bearish band = FAI < 25th pct (complacency = sell zone)
+    bearish_zone_lo = fai_10
+    bearish_zone_hi = complacency_threshold
 
     return dict(
-        df=df, current_zone=current_zone,
-        current_fai=current_fai, st_level=st_level,
-        fai_ma=fai_ma, fai_std=fai_std,
-        fai_90=fai_90, fai_10=fai_10,
-        bullish_hi=bullish_zone_hi, bullish_lo=bullish_zone_lo,
-        bearish_lo=bearish_zone_lo, bearish_hi=bearish_zone_hi,
+        df=df,
+        current_zone=current_zone,
+        current_fai=current_fai,
+        st_level=st_level,
+        st_direction=int(latest["ST_Dir"]),
+        fai_ma20=fai_ma20,
+        fai_std=fai_std,
+        fai_90=fai_90,
+        fai_75=fai_75,
+        fai_25=fai_25,
+        fai_10=fai_10,
+        bullish_lo=bullish_zone_lo,
+        bullish_hi=bullish_zone_hi,
+        bearish_lo=bearish_zone_lo,
+        bearish_hi=bearish_zone_hi,
+        panic_threshold=capitulation_threshold,
+        complacency_threshold=complacency_threshold,
     )
 
 
 def create_fai_chart(fai_result: dict, index_name: str) -> go.Figure:
     """
-    4-panel Fear-Adjusted Index chart:
-      Row 1 : FAI line + Supertrend + zone shading + BB bands
-      Row 2 : Raw Index Close
-      Row 3 : Raw VIX Close (color-coded)
-      Row 4 : FAI momentum (ROC-10)
+    5-panel Fear-Adjusted Index chart with corrected logic:
+      Row 1 : FAI + Supertrend + HMM regime coloring + threshold bands
+      Row 2 : NIFTY Close (to compare vs FAI)
+      Row 3 : VIX (color-coded)
+      Row 4 : HMM regime state (LOW/MID/HIGH) over time
+      Row 5 : FAI ROC-10 momentum
     """
-    df   = fai_result["df"].tail(252)
-    st, direction = df["ST"], df["ST_Dir"]
+    df        = fai_result["df"].tail(500)   # ~2 years for context
+    st_s      = df["ST"]
+    direction = df["ST_Dir"]
 
     fig = make_subplots(
-        rows=4, cols=1, shared_xaxes=True,
-        vertical_spacing=0.06,
-        row_heights=[0.45, 0.20, 0.18, 0.17],
+        rows=5, cols=1, shared_xaxes=True,
+        vertical_spacing=0.05,
+        row_heights=[0.38, 0.18, 0.14, 0.14, 0.16],
         subplot_titles=(
-            f"🧮 Fear-Adjusted Index ({index_name} × VIX) + Supertrend",
+            f"🧮 {index_name} × VIX — Fear Index + HMM Regimes + Supertrend",
             f"📈 {index_name} Close",
             "😨 India VIX",
+            "🤖 HMM Regime (LOW=Danger / HIGH=Opportunity)",
             "⚡ FAI Momentum (ROC-10)"
         )
     )
 
     # ── Zone background shading ───────────────────────────────────────────────
-    zone_clr = {"BULLISH": "rgba(22,163,74,0.07)",
-                 "CAUTION": "rgba(234,179,8,0.07)",
-                 "BEARISH": "rgba(220,38,38,0.07)",
-                 "EXTREME FEAR": "rgba(127,29,29,0.12)"}
+    zone_clr = {
+        "🟢 PANIC BUY":       "rgba(22,163,74,0.10)",
+        "🟡 FEAR — WATCH ST": "rgba(234,179,8,0.08)",
+        "🟢 RECOVERY":        "rgba(22,163,74,0.06)",
+        "🔴 DISTRIBUTION":    "rgba(220,38,38,0.07)",
+        "🔴 COMPLACENCY TOP": "rgba(127,29,29,0.10)",
+        "🟡 CALM BULL":       "rgba(59,130,246,0.05)",
+    }
     prev_zone, seg_start = df["Zone"].iloc[0], df.index[0]
     for dt, row in df.iterrows():
         z = row["Zone"]
         if z != prev_zone:
             fig.add_vrect(x0=seg_start, x1=dt,
-                          fillcolor=zone_clr.get(prev_zone, "rgba(200,200,200,0.05)"),
+                          fillcolor=zone_clr.get(prev_zone, "rgba(200,200,200,0.04)"),
                           layer="below", line_width=0, row=1, col=1)
             seg_start, prev_zone = dt, z
     fig.add_vrect(x0=seg_start, x1=df.index[-1],
-                  fillcolor=zone_clr.get(prev_zone, "rgba(200,200,200,0.05)"),
+                  fillcolor=zone_clr.get(prev_zone, "rgba(200,200,200,0.04)"),
                   layer="below", line_width=0, row=1, col=1)
 
-    # ── Row 1: FAI + Supertrend ───────────────────────────────────────────────
+    # FAI line
     fig.add_trace(go.Scatter(
-        x=df.index, y=df["FAI"], name="FAI",
+        x=df.index, y=df["FAI"], name="FAI (Index×VIX)",
         line=dict(color="#2563eb", width=2),
         hovertemplate="FAI: %{y:,.0f}<extra></extra>"
     ), row=1, col=1)
 
-    # Bollinger on FAI
-    fai_bb_mid  = df["FAI_MA20"]
-    fai_bb_std  = df["FAI_Std20"]
-    fai_bb_up   = fai_bb_mid + 2 * fai_bb_std
-    fai_bb_lo   = fai_bb_mid - 2 * fai_bb_std
-    fig.add_trace(go.Scatter(x=df.index, y=fai_bb_up, name="BB Upper",
-                              line=dict(color="rgba(100,100,200,0.35)", width=1, dash="dot")), row=1, col=1)
-    fig.add_trace(go.Scatter(x=df.index, y=fai_bb_lo, name="BB Lower",
-                              line=dict(color="rgba(100,100,200,0.35)", width=1, dash="dot"),
-                              fill="tonexty", fillcolor="rgba(100,100,200,0.04)"), row=1, col=1)
-    fig.add_trace(go.Scatter(x=df.index, y=fai_bb_mid, name="FAI MA-20",
+    # MA bands
+    fig.add_trace(go.Scatter(x=df.index, y=df["FAI_MA20"], name="MA-20",
                               line=dict(color="#ca8a04", width=1.2, dash="dash")), row=1, col=1)
+    fig.add_trace(go.Scatter(x=df.index, y=df["FAI_MA50"], name="MA-50",
+                              line=dict(color="#7c3aed", width=1.2, dash="dot")), row=1, col=1)
 
-    # Supertrend lines
-    bull_st = st.where(direction == 1)
-    bear_st = st.where(direction == -1)
-    fig.add_trace(go.Scatter(x=df.index, y=bull_st, name="ST Bull",
+    # Supertrend
+    bull_st = st_s.where(direction == 1)
+    bear_st = st_s.where(direction == -1)
+    fig.add_trace(go.Scatter(x=df.index, y=bull_st, name="ST ↑ (Buy FAI)",
                               line=dict(color="#16a34a", width=2.5), mode="lines"), row=1, col=1)
-    fig.add_trace(go.Scatter(x=df.index, y=bear_st, name="ST Bear",
+    fig.add_trace(go.Scatter(x=df.index, y=bear_st, name="ST ↓ (Sell FAI)",
                               line=dict(color="#dc2626", width=2.5), mode="lines"), row=1, col=1)
 
-    # Buy/sell flip signals
+    # KEY threshold lines — CORRECTED meaning
+    fig.add_hrect(
+        y0=fai_result["bullish_lo"], y1=fai_result["bullish_hi"],
+        fillcolor="rgba(22,163,74,0.06)", line_width=0.8, line_color="#16a34a",
+        annotation_text="🟢 FEAR ZONE — Buy Opportunity",
+        annotation_position="right",
+        annotation_font=dict(color="#15803d", size=9), row=1, col=1
+    )
+    fig.add_hrect(
+        y0=fai_result["bearish_lo"], y1=fai_result["bearish_hi"],
+        fillcolor="rgba(220,38,38,0.06)", line_width=0.8, line_color="#dc2626",
+        annotation_text="🔴 COMPLACENCY ZONE — Caution",
+        annotation_position="right",
+        annotation_font=dict(color="#b91c1c", size=9), row=1, col=1
+    )
+    fig.add_hline(y=fai_result["panic_threshold"],
+                  line_dash="dash", line_color="#16a34a", line_width=1.5,
+                  annotation_text=f"Panic/Buy Level: {fai_result['panic_threshold']:,.0f}",
+                  annotation_font=dict(color="#15803d", size=10),
+                  annotation_position="right", row=1, col=1)
+    fig.add_hline(y=fai_result["complacency_threshold"],
+                  line_dash="dash", line_color="#dc2626", line_width=1.5,
+                  annotation_text=f"Complacency/Sell Level: {fai_result['complacency_threshold']:,.0f}",
+                  annotation_font=dict(color="#b91c1c", size=10),
+                  annotation_position="right", row=1, col=1)
+
+    # ST flip signals on FAI — CORRECTED: ST flip UP after HIGH FAI = BUY
     buys  = df[(direction == 1)  & (direction.shift(1) == -1)]
     sells = df[(direction == -1) & (direction.shift(1) ==  1)]
     if not buys.empty:
@@ -712,8 +797,8 @@ def create_fai_chart(fai_result: dict, index_name: str) -> go.Figure:
             mode="markers+text",
             marker=dict(symbol="triangle-up", size=14, color="#16a34a",
                         line=dict(color="white", width=1)),
-            text=["BUY"] * len(buys), textposition="bottom center",
-            textfont=dict(color="#15803d", size=9), name="FAI Buy"
+            text=["INDEX BUY"] * len(buys), textposition="bottom center",
+            textfont=dict(color="#15803d", size=8), name="Index BUY Signal"
         ), row=1, col=1)
     if not sells.empty:
         fig.add_trace(go.Scatter(
@@ -721,22 +806,10 @@ def create_fai_chart(fai_result: dict, index_name: str) -> go.Figure:
             mode="markers+text",
             marker=dict(symbol="triangle-down", size=14, color="#dc2626",
                         line=dict(color="white", width=1)),
-            text=["SELL"] * len(sells), textposition="top center",
-            textfont=dict(color="#b91c1c", size=9), name="FAI Sell"
+            text=["INDEX SELL"] * len(sells), textposition="top center",
+            textfont=dict(color="#b91c1c", size=8), name="Index SELL Signal"
         ), row=1, col=1)
-
-    # Dynamic bullish / bearish range bands
-    fig.add_hrect(y0=fai_result["bullish_lo"], y1=fai_result["bullish_hi"],
-                  fillcolor="rgba(22,163,74,0.06)", line_width=0.5,
-                  line_color="#16a34a",
-                  annotation_text="Bullish Zone", annotation_position="right",
-                  annotation_font=dict(color="#15803d", size=9), row=1, col=1)
-    fig.add_hrect(y0=fai_result["bearish_lo"], y1=fai_result["bearish_hi"],
-                  fillcolor="rgba(220,38,38,0.06)", line_width=0.5,
-                  line_color="#dc2626",
-                  annotation_text="Bearish Zone", annotation_position="right",
-                  annotation_font=dict(color="#b91c1c", size=9), row=1, col=1)
-
+            
     # ── Row 2: Index Close ────────────────────────────────────────────────────
     fig.add_trace(go.Scatter(
         x=df.index, y=df["Index_Close"], name=index_name,
@@ -756,20 +829,36 @@ def create_fai_chart(fai_result: dict, index_name: str) -> go.Figure:
         fig.add_hline(y=lvl, line_dash="dash", line_color=clr, line_width=0.8,
                       annotation_text=str(lvl), annotation_font=dict(size=8),
                       annotation_position="right", row=3, col=1)
+    
+    # ── Row 4: HMM regime bar (LOW=red danger, MID=yellow, HIGH=green buy) ───────
+    hmm_num = df["HMM_Regime"].map({"LOW": -1, "MID": 0, "HIGH": 1}).fillna(0)
+    hmm_clr = ["#dc2626" if v == -1 else "#ca8a04" if v == 0 else "#16a34a"
+               for v in hmm_num]
+    fig.add_trace(go.Bar(
+        x=df.index, y=hmm_num, name="HMM State",
+        marker_color=hmm_clr, opacity=0.8,
+        hovertemplate="HMM: %{text}<extra></extra>",
+        text=df["HMM_Regime"].values
+    ), row=4, col=1)
+    fig.add_hline(y=0, line_dash="solid", line_color="#888", line_width=0.8, row=4, col=1)
+    # Annotations
+    fig.add_annotation(x=df.index[-1], y=1,   text="HIGH=Buy",  font=dict(size=8, color="#15803d"), showarrow=False, xref="x4", yref="y4")
+    fig.add_annotation(x=df.index[-1], y=-1,  text="LOW=Sell",  font=dict(size=8, color="#b91c1c"), showarrow=False, xref="x4", yref="y4")
 
-    # ── Row 4: ROC-10 momentum of FAI ────────────────────────────────────────
-    roc = df["FAI"].pct_change(10) * 100
+                       
+    # ── Row 5: FAI ROC-10 ────────────────────────────────────────────────────
+    roc   = df["FAI"].pct_change(10) * 100
     roc_c = ["#16a34a" if v >= 0 else "#dc2626" for v in roc.fillna(0)]
     fig.add_trace(go.Bar(
         x=df.index, y=roc, name="FAI ROC-10",
         marker_color=roc_c, opacity=0.75,
         hovertemplate="ROC-10: %{y:.2f}%<extra></extra>"
-    ), row=4, col=1)
-    fig.add_hline(y=0, line_dash="solid", line_color="#888", line_width=1, row=4, col=1)
+    ), row=5, col=1)
+    fig.add_hline(y=0, line_dash="solid", line_color="#888", line_width=1, row=5, col=1)
 
-    # ── Layout ───────────────────────────────────────────────────────────────
+    # ── Layout ────────────────────────────────────────────────────────────────
     fig.update_layout(
-        height=1000, hovermode="x unified", showlegend=True,
+        height=1100, hovermode="x unified", showlegend=True,
         legend=dict(orientation="h", yanchor="bottom", y=1.01,
                     xanchor="right", x=1,
                     bgcolor="rgba(255,255,255,0.9)", bordercolor="#ddd", borderwidth=1),
@@ -777,10 +866,11 @@ def create_fai_chart(fai_result: dict, index_name: str) -> go.Figure:
     )
     fig.update_xaxes(**AXIS_STYLE, tickfont=dict(color="#111111", size=11))
     fig.update_yaxes(**AXIS_STYLE, tickfont=dict(color="#111111", size=11))
-    fig.update_yaxes(title_text="FAI",        title_font=dict(size=10), row=1, col=1)
-    fig.update_yaxes(title_text=index_name,   title_font=dict(size=10), row=2, col=1)
-    fig.update_yaxes(title_text="VIX",        title_font=dict(size=10), row=3, col=1)
-    fig.update_yaxes(title_text="ROC-10 (%)", title_font=dict(size=10), row=4, col=1)
+    fig.update_yaxes(title_text="FAI",         title_font=dict(size=10), row=1, col=1)
+    fig.update_yaxes(title_text=index_name,    title_font=dict(size=10), row=2, col=1)
+    fig.update_yaxes(title_text="VIX",         title_font=dict(size=10), row=3, col=1)
+    fig.update_yaxes(title_text="HMM State",   title_font=dict(size=10), row=4, col=1)
+    fig.update_yaxes(title_text="ROC-10 (%)",  title_font=dict(size=10), row=5, col=1)
     fig = _style_subplot_titles(fig)
     return fig, buys, sells
 
