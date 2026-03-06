@@ -177,7 +177,7 @@ def create_adaptive_supertrend_chart(df_full, atr_period=10, n_clusters=3):
         vertical_spacing=0.06,
         row_heights=[0.50, 0.18, 0.14, 0.18],
         subplot_titles=(
-            "🤖 AI Adaptive Supertrend — K-Means",
+            #"🤖 AI Adaptive Supertrend — K-Means",
             "ATR by Volatility Regime",
             "Adaptive Multiplier",
             "Volume"
@@ -250,13 +250,13 @@ def create_adaptive_supertrend_chart(df_full, atr_period=10, n_clusters=3):
         fill="tozeroy", fillcolor="rgba(124,58,237,0.10)"
     ), row=3, col=1)
 
-    vol_c = ["#16a34a" if df["Close"].iloc[i] >= df["Open"].iloc[i]
-             else "#dc2626" for i in range(len(df))]
+    vol_c = ["#16f02f" if df["Close"].iloc[i] >= df["Open"].iloc[i]
+             else "#f51818" for i in range(len(df))]
     fig.add_trace(go.Bar(x=df.index, y=df["Volume"], name="Volume",
                           marker_color=vol_c, opacity=0.7), row=4, col=1)
     fig.add_trace(go.Scatter(
         x=df.index, y=df["Volume"].rolling(20).mean(),
-        name="Vol MA-20", line=dict(color="#f97316", width=1.5, dash="dot")
+        name="Vol MA-20", line=dict(color="#fff940", width=1.5, dash="dot")
     ), row=4, col=1)
 
     fig.update_layout(
@@ -413,7 +413,7 @@ def create_vix_index_chart(index_df: pd.DataFrame, vix_df: pd.DataFrame,
     ), row=2, col=1)
 
     # VIX reference lines
-    for lvl, clr, lbl in [(15, "#16a34a", "15"), (20, "#ca8a04", "20"), (25, "#dc2626", "25")]:
+    for lvl, clr, lbl in [(15, "#07f05d", "15"), (20, "#eda409", "20"), (25, "#f51414", "25")]:
         fig.add_hline(y=lvl, line_dash="dash", line_color=clr, line_width=1,
                       annotation_text=lbl, annotation_font=dict(size=9, color=clr),
                       annotation_position="right", row=2, col=1)
@@ -428,9 +428,9 @@ def create_vix_index_chart(index_df: pd.DataFrame, vix_df: pd.DataFrame,
         hovertemplate="Corr: %{y:.3f}<extra></extra>"
     ), row=3, col=1)
     fig.add_hline(y=0,    line_dash="solid", line_color="#888",   line_width=1, row=3, col=1)
-    fig.add_hline(y=-0.5, line_dash="dash",  line_color="#dc2626",line_width=0.8,
+    fig.add_hline(y=-0.5, line_dash="dash",  line_color="#fa2323",line_width=0.8,
                   annotation_text="-0.5", annotation_font=dict(size=9), row=3, col=1)
-    fig.add_hline(y=0.5,  line_dash="dash",  line_color="#2563eb", line_width=0.8,
+    fig.add_hline(y=0.5,  line_dash="dash",  line_color="#1348bd", line_width=0.8,
                   annotation_text="+0.5", annotation_font=dict(size=9), row=3, col=1)
 
     # ── Layout ───────────────────────────────────────────────────────────────
