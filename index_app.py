@@ -952,10 +952,11 @@ class IndexAnalyzer:
         df["SMA_21"]  = SMAIndicator(df["Close"], 21).sma_indicator()
         df["SMA_50"]  = SMAIndicator(df["Close"], 50).sma_indicator()
         df["SMA_200"] = SMAIndicator(df["Close"], 200).sma_indicator()
-        df["EMA_9"]   = EMAIndicator(df["Close"], 9).ema_indicator()
+        df["EMA_10"]   = EMAIndicator(df["Close"], 10).ema_indicator()
         df["EMA_13"]  = EMAIndicator(df["Close"], 13).ema_indicator()
         df["EMA_20"]  = EMAIndicator(df["Close"], 20).ema_indicator()
         df["EMA_50"]  = EMAIndicator(df["Close"], 50).ema_indicator()
+        df["EMA_70"]  = EMAIndicator(df["Close"], 70).ema_indicator()    
         df["EMA_200"] = EMAIndicator(df["Close"], 200).ema_indicator()
 
         macd = MACD(df["Close"])
@@ -1189,9 +1190,8 @@ def create_candlestick_chart(analyzer: IndexAnalyzer, patterns=None):
     ), row=1, col=1)
 
     colours_ma = {
-        "SMA_21":  ("#f97316", 1.2), "SMA_50":  ("#2563eb", 1.5),
-        "SMA_200": ("#dc2626", 2.0), "EMA_9":   ("#16a34a", 1.2),
-        "EMA_20":  ("#0891b2", 1.2), "EMA_50":  ("#7c3aed", 1.5),
+        "SMA_21": ("#080707", 1.2),"SMA_200": ("#dc2626", 1.5), 
+        "EMA_10":  ("#0891b2", 1.2), "EMA_70":  ("#7c3aed", 1.2),
     }
     for col_name, (clr, wid) in colours_ma.items():
         if col_name in df.columns:
