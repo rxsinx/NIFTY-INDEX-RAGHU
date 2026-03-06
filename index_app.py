@@ -1501,7 +1501,7 @@ def main():
 
         # ── Charts ────────────────────────────────────────────────────────────
         st.markdown('<div class="sub-header">📊 Charts & Forecasts</div>', unsafe_allow_html=True)
-        ct1, ct2, ct3, ct4, ct5, ct6 = st.tabs([
+        ct1, ct2, ct3, ct4, ct5, ct6, ct7 = st.tabs([
             "Price Action & Indicators", "Volume Profile",
             "🤖 AI Adaptive Supertrend", "⛓️ MCMC Bayesian Forecast",
             "🎲 HMM Forecast", "😨 VIX Analysis",
