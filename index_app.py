@@ -575,7 +575,52 @@ def _supertrend_on_series(high: pd.Series, low: pd.Series, close: pd.Series,
         st.iloc[i] = lower_f.iloc[i] if direction.iloc[i] == 1 else upper_f.iloc[i]
 
     return st, direction, upper_f, lower_f, atr
+                                   
+# ── HMM on FAI ───────────────────────────────────────────────────────────────
 
+def _fai_hmm_regimes(fai_series: pd.Series, n_states: int = 3) -> pd.Series:
+    """
+    Fit a 3-state Gaussian HMM on FAI returns to detect:
+      State 0 = LOW FAI  (complacency / distribution / bearish)
+      State 1 = MID FAI  (transition / recovery)
+      State 2 = HIGH FAI (panic / capitulation → BULLISH reversal)
+
+    Returns a Series of regime labels per bar.
+    """
+    from hmmlearn import hmm as hmmlib
+
+    returns = fai_series.pct_change().fillna(0).values.reshape(-1, 1)
+    lengths = [len(returns)]
+
+    model = hmmlib.GaussianHMM(
+        n_components=n_states, covariance_type="full",
+        n_iter=200, random_state=42
+    )
+    try:
+        model.fit(returns, lengths=lengths)
+        hidden_states = model.predict(returns)
+    except Exception:
+        # Fallback: simple quantile-based regimes
+        q33 = np.quantile(fai_series, 0.33)
+        q67 = np.quantile(fai_series, 0.67)
+        hidden_states = np.where(fai_series < q33, 0,
+                         np.where(fai_series < q67, 1, 2))
+
+    # Map states: sort by mean FAI level
+    # State with LOWEST mean FAI  = LOW regime (complacency)
+    # State with HIGHEST mean FAI = HIGH regime (panic → buy)
+    state_means = {}
+    for s in range(n_states):
+        mask = hidden_states == s
+        state_means[s] = float(fai_series.values[mask].mean()) if mask.any() else 0.0
+
+    sorted_states = sorted(state_means, key=state_means.get)   # low → high
+    remap = {sorted_states[0]: "LOW",
+             sorted_states[1]: "MID",
+             sorted_states[2]: "HIGH"}
+
+    labels = pd.Series([remap[s] for s in hidden_states], index=fai_series.index)
+    return labels, model, state_means
 
 def analyse_fai_regimes(df: pd.DataFrame) -> dict:
     """
@@ -1191,7 +1236,7 @@ def create_candlestick_chart(analyzer: IndexAnalyzer, patterns=None):
     fig.add_trace(go.Scatter(x=df.index, y=df["Stoch_K"], name="Stoch %K",
                               line=dict(color="#f97316", width=1.5)), row=3, col=1)
     fig.add_trace(go.Scatter(x=df.index, y=df["Stoch_D"], name="Stoch %D",
-                              line=dict(color="#fb923c", width=1.5, dash="dot")), row=3, col=1)
+                              line=dict(color="#f52516", width=1.5, dash="dot")), row=3, col=1)
     for lvl, clr, dash in [(70, "#dc2626", "dash"), (30, "#16a34a", "dash"),
                             (80, "#7f1d1d", "dot"),  (20, "#14532d", "dot")]:
         fig.add_hline(y=lvl, line_dash=dash, line_color=clr, line_width=0.8,
@@ -1991,7 +2036,7 @@ When FAI is very low (e.g., <300,000 for NIFTY):
                     st.code(traceback.format_exc())
             else:
                 st.warning("⚠️ India VIX data unavailable — cannot build Fear-Adjusted Index.")
-            
+                    
         # ── Indicators Summary ────────────────────────────────────────────────
         st.markdown('<div class="sub-header">📋 Technical Indicators Summary</div>',
                     unsafe_allow_html=True)
