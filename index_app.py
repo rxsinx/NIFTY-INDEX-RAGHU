@@ -174,10 +174,10 @@ def create_adaptive_supertrend_chart(df_full, atr_period=10, n_clusters=3):
     # subplot_titles places each label directly above its own panel
     fig = make_subplots(
         rows=4, cols=1, shared_xaxes=True,
-        vertical_spacing=0.06,
-        row_heights=[0.50, 0.18, 0.14, 0.18],
+        vertical_spacing=0.08,
+        row_heights=[0.60, 0.20, 0.15, 0.20],
         subplot_titles=(
-            #"🤖 AI Adaptive Supertrend — K-Means",
+            "🤖 AI Adaptive Supertrend — K-Means",
             "ATR by Volatility Regime",
             "Adaptive Multiplier",
             "Volume"
@@ -273,6 +273,40 @@ def create_adaptive_supertrend_chart(df_full, atr_period=10, n_clusters=3):
     fig.update_yaxes(title_text="ATR",        title_font=dict(size=11), row=2, col=1)
     fig.update_yaxes(title_text="Multiplier", title_font=dict(size=11), row=3, col=1)
     fig.update_yaxes(title_text="Volume",     title_font=dict(size=11), row=4, col=1)
+
+
+    # ── Black background for rows 2 (ATR), 3 (Multiplier), 4 (Volume) ─────────
+    
+    dark_tick  = dict(color="#cccccc")
+    dark_grid  = "#333333"
+    dark_zero  = "#555555"
+    dark_title = dict(color="#eeeeee", size=11)
+
+    for axis_n, row_n in [("yaxis2", 2), ("yaxis3", 3), ("yaxis4", 4)]:
+        fig.layout[axis_n].update(
+            gridcolor=dark_grid, zerolinecolor=dark_zero,
+            tickfont=dark_tick, title_font=dark_title,
+        )
+    for axis_n in ["xaxis2", "xaxis3", "xaxis4"]:
+        fig.layout[axis_n].update(
+            gridcolor=dark_grid, tickfont=dark_tick,
+        )
+
+    # Paint each dark panel with a black paper-rect shape
+    for axis_n in ["yaxis2", "yaxis3", "yaxis4"]:
+        domain = fig.layout[axis_n].domain
+        if domain:
+            fig.add_shape(
+                type="rect",
+                xref="paper", yref="paper",
+                x0=0, x1=1,
+                y0=domain[0], y1=domain[1],
+                fillcolor="#0e1117",
+                line_width=0,
+                layer="below",
+            )
+        
+        
     # Style subplot title annotations
     for ann in fig.layout.annotations:
         ann.update(font=dict(size=12, color="#1e3a5f"), bgcolor="rgba(240,248,255,0.8)",
