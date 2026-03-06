@@ -596,7 +596,7 @@ def analyse_fai_regimes(df: pd.DataFrame) -> dict:
       ST rising  (dir=+1) after HIGH FAI spike = confirmed recovery → STRONG BUY
       ST falling (dir=-1) from LOW FAI         = distribution top  → STRONG SELL
     """
-    st, direction, uf, lf, atr = _supertrend_on_series(
+    st_series, direction, uf, lf, atr = _supertrend_on_series(
         df["FAI_High"], df["FAI_Low"], df["FAI_Close"], atr_period=10, multiplier=3.0)
 
     df = df.copy()
