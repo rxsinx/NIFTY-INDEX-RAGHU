@@ -95,10 +95,7 @@ INDEX_MAP = {
     "NIFTY FMCG":   "^CNXFMCG",
     "NIFTY AUTO":   "^CNXAUTO",
     "NIFTY PHARMA": "^CNXPHARMA",
-    "NIFTY MIDCAP": "^NSEMDCP50",
-    "NIFTY REALTY": "^CNXREALTY",
-    "NIFTY METAL":  "^CNXMETAL",
-    "NIFTY ENERGY": "^CNXENERGY",
+    "NIFTY MIDCAP": "^NSEMDCP50",    
 }
 
 VIX_SYMBOL = "^INDIAVIX"
@@ -280,7 +277,7 @@ def create_adaptive_supertrend_chart(df_full, atr_period=10, n_clusters=3):
     dark_tick  = dict(color="#302f2f")
     dark_grid  = "#333333"
     dark_zero  = "#555555"
-    dark_title = dict(color="#eeeeee", size=11)
+    dark_title = dict(color="#5e5a5a", size=11)
 
     for axis_n, row_n in [("yaxis2", 2), ("yaxis3", 3), ("yaxis4", 4)]:
         fig.layout[axis_n].update(
@@ -1499,23 +1496,17 @@ def main():
         st.markdown("---")
         st.markdown("### 📐 Pattern Categories")
         st.markdown("""
-                        **Index Trend Patterns (7):**
-                        - ✅ Ascending / Descending Triangle
-                        - ✅ Symmetrical Triangle
-                        - ✅ Bull Flag / Bear Flag
-                        - ✅ Rising / Falling Wedge
-                        - ✅ Pennant (Bull/Bear)
                         
-                        **Reversal Patterns (6):**
-                        - ✅ Head & Shoulders / Inverse H&S
-                        - ✅ Double Top / Double Bottom
-                        - ✅ Triple Top / Triple Bottom
+                    | Index Trend Patterns             | Reversal Patterns          | Index-Specific           |
+                    |----------------------------------|----------------------------|--------------------------|
+                    | ✅Ascending / Descending Triangle|✅ Head & Shoulders / Inverse H&S|✅ Range Breakout, Cup & Handle|
+                    | ✅ Symmetrical Triangle|✅ Double Top / Double Bottom| ✅ Flat Base, Mean Reversion|
+                    | ✅ Bull Flag / Bear Flag|✅ Triple Top / Triple Bottom|✅ Elliott Wave, Wyckoff Acc/Dist|
+                    | ✅ Rising / Falling Wedge|        |        |
+                    | ✅ Pennant (Bull/Bear)|        |        |
                         
-                        **Index-Specific (7):**
-                        - ✅ Range Breakout, Cup & Handle
-                        - ✅ Flat Base, Mean Reversion
-                        - ✅ Elliott Wave, Wyckoff Acc/Dist
-                                """)
+                               
+        """)
 
 
 if __name__ == "__main__":
