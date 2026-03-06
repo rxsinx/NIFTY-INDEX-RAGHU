@@ -504,6 +504,287 @@ def get_vix_summary(vix_df: pd.DataFrame) -> dict:
                 ma20=ma20, high52=high52, low52=low52, regime=regime)
 
 # ============================================================================
+# FEAR-ADJUSTED INDEX  (Index CMP × VIX CMP)
+# ============================================================================
+
+def build_fear_index(index_df: pd.DataFrame, vix_df: pd.DataFrame) -> pd.DataFrame:
+    """
+    Construct the Fear-Adjusted Index = Index_Close × VIX_Close.
+
+    Interpretation
+    ──────────────
+    Rising  → market moving UP while fear stays high  (unsustainable / distribution risk)
+    Falling → market falling AND/OR fear spiking      (panic, capitulation, potential bottom)
+    Low & stable → calm bull market (healthy)
+    High & stable → complacent rally (watch for reversal)
+    """
+    # Normalise tz
+    idx = index_df.copy()
+    vix = vix_df.copy()
+    if idx.index.tz is not None:
+        idx.index = idx.index.tz_localize(None)
+    if vix.index.tz is not None:
+        vix.index = vix.index.tz_localize(None)
+
+    common = idx.index.intersection(vix.index)
+    idx = idx.loc[common]
+    vix = vix.loc[common]
+
+    df = pd.DataFrame(index=common)
+    df["Index_Close"] = idx["Close"].values
+    df["VIX_Close"]   = vix["Close"].values
+    df["FAI"]         = df["Index_Close"] * df["VIX_Close"]   # Fear-Adjusted Index
+
+    # OHLC proxy for FAI (needed for Supertrend ATR)
+    df["FAI_High"]  = (idx["High"].values  * vix["High"].values)
+    df["FAI_Low"]   = (idx["Low"].values   * vix["Low"].values)
+    df["FAI_Open"]  = (idx["Open"].values  * vix["Open"].values)
+    df["FAI_Close"] = df["FAI"]
+    return df
+
+
+def _supertrend_on_series(high: pd.Series, low: pd.Series, close: pd.Series,
+                           atr_period: int = 10, multiplier: float = 3.0):
+    """Vanilla Supertrend applied to any OHLC series."""
+    hl2   = (high + low) / 2.0
+    # ATR via Wilder's method
+    tr    = pd.concat([high - low,
+                       (high - close.shift()).abs(),
+                       (low  - close.shift()).abs()], axis=1).max(axis=1)
+    atr   = tr.ewm(alpha=1/atr_period, adjust=False).mean()
+
+    upper_b = hl2 + multiplier * atr
+    lower_b = hl2 - multiplier * atr
+
+    upper_f = upper_b.copy()
+    lower_f = lower_b.copy()
+    st      = pd.Series(np.nan, index=close.index)
+    direction = pd.Series(1, index=close.index)
+    cv = close.values
+
+    for i in range(1, len(close)):
+        upper_f.iloc[i] = (min(upper_b.iloc[i], upper_f.iloc[i-1])
+                           if cv[i-1] <= upper_f.iloc[i-1] else upper_b.iloc[i])
+        lower_f.iloc[i] = (max(lower_b.iloc[i], lower_f.iloc[i-1])
+                           if cv[i-1] >= lower_f.iloc[i-1] else lower_b.iloc[i])
+
+        if   cv[i] > upper_f.iloc[i-1]: direction.iloc[i] =  1
+        elif cv[i] < lower_f.iloc[i-1]: direction.iloc[i] = -1
+        else:                            direction.iloc[i] = direction.iloc[i-1]
+
+        st.iloc[i] = lower_f.iloc[i] if direction.iloc[i] == 1 else upper_f.iloc[i]
+
+    return st, direction, upper_f, lower_f, atr
+
+
+def analyse_fai_regimes(df: pd.DataFrame) -> dict:
+    """
+    Derive Bullish / Bearish / Caution ranges from FAI + Supertrend direction.
+
+    Zones
+    ─────
+    Bullish  : ST direction = +1  AND  FAI below its 20-day mean   → calm uptrend
+    Caution  : ST direction = +1  AND  FAI above its 20-day mean   → rally with fear, watch
+    Bearish  : ST direction = -1                                    → downtrend confirmed
+    Extreme  : ST direction = -1  AND  FAI in top 10% of range     → panic, potential reversal
+    """
+    st, direction, uf, lf, atr = _supertrend_on_series(
+        df["FAI_High"], df["FAI_Low"], df["FAI_Close"], atr_period=10, multiplier=3.0)
+
+    df = df.copy()
+    df["ST"]        = st
+    df["ST_Dir"]    = direction
+    df["FAI_MA20"]  = df["FAI"].rolling(20).mean()
+    df["FAI_Std20"] = df["FAI"].rolling(20).std()
+
+    fai_90 = df["FAI"].quantile(0.90)
+    fai_10 = df["FAI"].quantile(0.10)
+
+    def zone(row):
+        if row["ST_Dir"] == 1 and row["FAI"] <= row["FAI_MA20"]:
+            return "BULLISH"
+        elif row["ST_Dir"] == 1 and row["FAI"] > row["FAI_MA20"]:
+            return "CAUTION"
+        elif row["ST_Dir"] == -1 and row["FAI"] >= fai_90:
+            return "EXTREME FEAR"
+        else:
+            return "BEARISH"
+
+    df["Zone"] = df.apply(zone, axis=1)
+
+    latest       = df.iloc[-1]
+    current_zone = latest["Zone"]
+    current_fai  = float(latest["FAI"])
+    st_level     = float(latest["ST"])
+    fai_ma       = float(latest["FAI_MA20"])
+    fai_std      = float(latest["FAI_Std20"])
+
+    # Dynamic support / resistance bands from ST + std
+    bullish_zone_hi = fai_ma
+    bullish_zone_lo = fai_ma - 1.5 * fai_std
+    bearish_zone_lo = fai_ma
+    bearish_zone_hi = fai_ma + 2.0 * fai_std
+
+    return dict(
+        df=df, current_zone=current_zone,
+        current_fai=current_fai, st_level=st_level,
+        fai_ma=fai_ma, fai_std=fai_std,
+        fai_90=fai_90, fai_10=fai_10,
+        bullish_hi=bullish_zone_hi, bullish_lo=bullish_zone_lo,
+        bearish_lo=bearish_zone_lo, bearish_hi=bearish_zone_hi,
+    )
+
+
+def create_fai_chart(fai_result: dict, index_name: str) -> go.Figure:
+    """
+    4-panel Fear-Adjusted Index chart:
+      Row 1 : FAI line + Supertrend + zone shading + BB bands
+      Row 2 : Raw Index Close
+      Row 3 : Raw VIX Close (color-coded)
+      Row 4 : FAI momentum (ROC-10)
+    """
+    df   = fai_result["df"].tail(252)
+    st, direction = df["ST"], df["ST_Dir"]
+
+    fig = make_subplots(
+        rows=4, cols=1, shared_xaxes=True,
+        vertical_spacing=0.06,
+        row_heights=[0.45, 0.20, 0.18, 0.17],
+        subplot_titles=(
+            f"🧮 Fear-Adjusted Index ({index_name} × VIX) + Supertrend",
+            f"📈 {index_name} Close",
+            "😨 India VIX",
+            "⚡ FAI Momentum (ROC-10)"
+        )
+    )
+
+    # ── Zone background shading ───────────────────────────────────────────────
+    zone_clr = {"BULLISH": "rgba(22,163,74,0.07)",
+                 "CAUTION": "rgba(234,179,8,0.07)",
+                 "BEARISH": "rgba(220,38,38,0.07)",
+                 "EXTREME FEAR": "rgba(127,29,29,0.12)"}
+    prev_zone, seg_start = df["Zone"].iloc[0], df.index[0]
+    for dt, row in df.iterrows():
+        z = row["Zone"]
+        if z != prev_zone:
+            fig.add_vrect(x0=seg_start, x1=dt,
+                          fillcolor=zone_clr.get(prev_zone, "rgba(200,200,200,0.05)"),
+                          layer="below", line_width=0, row=1, col=1)
+            seg_start, prev_zone = dt, z
+    fig.add_vrect(x0=seg_start, x1=df.index[-1],
+                  fillcolor=zone_clr.get(prev_zone, "rgba(200,200,200,0.05)"),
+                  layer="below", line_width=0, row=1, col=1)
+
+    # ── Row 1: FAI + Supertrend ───────────────────────────────────────────────
+    fig.add_trace(go.Scatter(
+        x=df.index, y=df["FAI"], name="FAI",
+        line=dict(color="#2563eb", width=2),
+        hovertemplate="FAI: %{y:,.0f}<extra></extra>"
+    ), row=1, col=1)
+
+    # Bollinger on FAI
+    fai_bb_mid  = df["FAI_MA20"]
+    fai_bb_std  = df["FAI_Std20"]
+    fai_bb_up   = fai_bb_mid + 2 * fai_bb_std
+    fai_bb_lo   = fai_bb_mid - 2 * fai_bb_std
+    fig.add_trace(go.Scatter(x=df.index, y=fai_bb_up, name="BB Upper",
+                              line=dict(color="rgba(100,100,200,0.35)", width=1, dash="dot")), row=1, col=1)
+    fig.add_trace(go.Scatter(x=df.index, y=fai_bb_lo, name="BB Lower",
+                              line=dict(color="rgba(100,100,200,0.35)", width=1, dash="dot"),
+                              fill="tonexty", fillcolor="rgba(100,100,200,0.04)"), row=1, col=1)
+    fig.add_trace(go.Scatter(x=df.index, y=fai_bb_mid, name="FAI MA-20",
+                              line=dict(color="#ca8a04", width=1.2, dash="dash")), row=1, col=1)
+
+    # Supertrend lines
+    bull_st = st.where(direction == 1)
+    bear_st = st.where(direction == -1)
+    fig.add_trace(go.Scatter(x=df.index, y=bull_st, name="ST Bull",
+                              line=dict(color="#16a34a", width=2.5), mode="lines"), row=1, col=1)
+    fig.add_trace(go.Scatter(x=df.index, y=bear_st, name="ST Bear",
+                              line=dict(color="#dc2626", width=2.5), mode="lines"), row=1, col=1)
+
+    # Buy/sell flip signals
+    buys  = df[(direction == 1)  & (direction.shift(1) == -1)]
+    sells = df[(direction == -1) & (direction.shift(1) ==  1)]
+    if not buys.empty:
+        fig.add_trace(go.Scatter(
+            x=buys.index, y=buys["FAI"] * 0.992,
+            mode="markers+text",
+            marker=dict(symbol="triangle-up", size=14, color="#16a34a",
+                        line=dict(color="white", width=1)),
+            text=["BUY"] * len(buys), textposition="bottom center",
+            textfont=dict(color="#15803d", size=9), name="FAI Buy"
+        ), row=1, col=1)
+    if not sells.empty:
+        fig.add_trace(go.Scatter(
+            x=sells.index, y=sells["FAI"] * 1.008,
+            mode="markers+text",
+            marker=dict(symbol="triangle-down", size=14, color="#dc2626",
+                        line=dict(color="white", width=1)),
+            text=["SELL"] * len(sells), textposition="top center",
+            textfont=dict(color="#b91c1c", size=9), name="FAI Sell"
+        ), row=1, col=1)
+
+    # Dynamic bullish / bearish range bands
+    fig.add_hrect(y0=fai_result["bullish_lo"], y1=fai_result["bullish_hi"],
+                  fillcolor="rgba(22,163,74,0.06)", line_width=0.5,
+                  line_color="#16a34a",
+                  annotation_text="Bullish Zone", annotation_position="right",
+                  annotation_font=dict(color="#15803d", size=9), row=1, col=1)
+    fig.add_hrect(y0=fai_result["bearish_lo"], y1=fai_result["bearish_hi"],
+                  fillcolor="rgba(220,38,38,0.06)", line_width=0.5,
+                  line_color="#dc2626",
+                  annotation_text="Bearish Zone", annotation_position="right",
+                  annotation_font=dict(color="#b91c1c", size=9), row=1, col=1)
+
+    # ── Row 2: Index Close ────────────────────────────────────────────────────
+    fig.add_trace(go.Scatter(
+        x=df.index, y=df["Index_Close"], name=index_name,
+        line=dict(color="#2563eb", width=1.8),
+        hovertemplate=f"{index_name}: %{{y:,.0f}}<extra></extra>"
+    ), row=2, col=1)
+
+    # ── Row 3: VIX bar ───────────────────────────────────────────────────────
+    vix_c = ["#16a34a" if v < 15 else "#ca8a04" if v < 20
+              else "#f97316" if v < 25 else "#dc2626" for v in df["VIX_Close"]]
+    fig.add_trace(go.Bar(
+        x=df.index, y=df["VIX_Close"], name="VIX",
+        marker_color=vix_c, opacity=0.8,
+        hovertemplate="VIX: %{y:.2f}<extra></extra>"
+    ), row=3, col=1)
+    for lvl, clr in [(15, "#16a34a"), (20, "#ca8a04"), (25, "#dc2626")]:
+        fig.add_hline(y=lvl, line_dash="dash", line_color=clr, line_width=0.8,
+                      annotation_text=str(lvl), annotation_font=dict(size=8),
+                      annotation_position="right", row=3, col=1)
+
+    # ── Row 4: ROC-10 momentum of FAI ────────────────────────────────────────
+    roc = df["FAI"].pct_change(10) * 100
+    roc_c = ["#16a34a" if v >= 0 else "#dc2626" for v in roc.fillna(0)]
+    fig.add_trace(go.Bar(
+        x=df.index, y=roc, name="FAI ROC-10",
+        marker_color=roc_c, opacity=0.75,
+        hovertemplate="ROC-10: %{y:.2f}%<extra></extra>"
+    ), row=4, col=1)
+    fig.add_hline(y=0, line_dash="solid", line_color="#888", line_width=1, row=4, col=1)
+
+    # ── Layout ───────────────────────────────────────────────────────────────
+    fig.update_layout(
+        height=1000, hovermode="x unified", showlegend=True,
+        legend=dict(orientation="h", yanchor="bottom", y=1.01,
+                    xanchor="right", x=1,
+                    bgcolor="rgba(255,255,255,0.9)", bordercolor="#ddd", borderwidth=1),
+        **CHART_THEME
+    )
+    fig.update_xaxes(**AXIS_STYLE, tickfont=dict(color="#111111", size=11))
+    fig.update_yaxes(**AXIS_STYLE, tickfont=dict(color="#111111", size=11))
+    fig.update_yaxes(title_text="FAI",        title_font=dict(size=10), row=1, col=1)
+    fig.update_yaxes(title_text=index_name,   title_font=dict(size=10), row=2, col=1)
+    fig.update_yaxes(title_text="VIX",        title_font=dict(size=10), row=3, col=1)
+    fig.update_yaxes(title_text="ROC-10 (%)", title_font=dict(size=10), row=4, col=1)
+    fig = _style_subplot_titles(fig)
+    return fig, buys, sells
+
+# ============================================================================
 # INDEX ANALYZER CLASS
 # ============================================================================
 
@@ -1468,7 +1749,89 @@ def main():
                         st.info("🔄 Weak correlation — VIX and Index decoupled recently.")
             else:
                 st.warning("⚠️ India VIX data unavailable. yfinance may not have `^INDIAVIX` at this time.")
+        
+        with ct7:
+            st.markdown("### 🧮 Fear-Adjusted Index — Index × VIX Supertrend")
+            st.caption("FAI = Index Close × VIX Close. Supertrend applied to this composite "
+                       "to detect fear-adjusted trend regimes that raw price alone misses.")
+            if vix_ok:
+                try:
+                    fai_df  = build_fear_index(analyzer.data, vix_df)
+                    fai_res = analyse_fai_regimes(fai_df)
 
+                    # ── Current regime banner ─────────────────────────────────
+                    zone = fai_res["current_zone"]
+                    if zone == "BULLISH":
+                        st.success(f"🟢 **{zone}** — FAI Supertrend bullish, fear low. Healthy uptrend.")
+                    elif zone == "CAUTION":
+                        st.warning(f"🟡 **{zone}** — FAI Supertrend bullish BUT fear elevated. "
+                                   "Rally may be unsustainable; tighten stops.")
+                    elif zone == "EXTREME FEAR":
+                        st.error(f"🔴 **{zone}** — FAI at panic levels. "
+                                 "Potential capitulation / reversal zone. Watch for ST flip.")
+                    else:
+                        st.error(f"🔴 **{zone}** — FAI Supertrend bearish. Downtrend confirmed.")
+
+                    # ── Key metrics ───────────────────────────────────────────
+                    f1, f2, f3, f4, f5 = st.columns(5)
+                    with f1: st.metric("FAI (Current)",   f"{fai_res['current_fai']:,.0f}")
+                    with f2: st.metric("FAI Supertrend",  f"{fai_res['st_level']:,.0f}")
+                    with f3: st.metric("FAI MA-20",       f"{fai_res['fai_ma']:,.0f}")
+                    with f4: st.metric("Bullish Zone",
+                                       f"{fai_res['bullish_lo']:,.0f} – {fai_res['bullish_hi']:,.0f}")
+                    with f5: st.metric("Bearish Zone",
+                                       f"{fai_res['bearish_lo']:,.0f} – {fai_res['bearish_hi']:,.0f}")
+
+                    # ── Zone distribution table ───────────────────────────────
+                    st.markdown("#### 📊 Zone Distribution (last 252 days)")
+                    zone_counts = fai_res["df"].tail(252)["Zone"].value_counts()
+                    total = zone_counts.sum()
+                    zc1, zc2, zc3, zc4 = st.columns(4)
+                    zone_cols = {"BULLISH": (zc1, "🟢"), "CAUTION": (zc2, "🟡"),
+                                 "BEARISH": (zc3, "🔴"), "EXTREME FEAR": (zc4, "🟣")}
+                    for zn, (col, emo) in zone_cols.items():
+                        cnt = int(zone_counts.get(zn, 0))
+                        with col:
+                            st.metric(f"{emo} {zn}", f"{cnt/total*100:.1f}%", f"{cnt} days")
+
+                    # ── Reference guide ───────────────────────────────────────
+                    st.markdown("""
+| Zone | ST Dir | FAI vs MA-20 | Meaning | Action |
+|------|--------|-------------|---------|--------|
+| 🟢 Bullish | ↑ | Below | Calm uptrend, low fear | Hold longs |
+| 🟡 Caution | ↑ | Above | Rally with fear — unstable | Trail stops |
+| 🔴 Bearish | ↓ | Any | Downtrend confirmed | Reduce longs / hedge |
+| 🟣 Extreme Fear | ↓ | Top 10% | Panic / capitulation | Watch for ST flip → buy |
+""")
+
+                    # ── Chart ─────────────────────────────────────────────────
+                    fai_fig, fai_buys, fai_sells = create_fai_chart(fai_res, index_name)
+                    st.plotly_chart(fai_fig, use_container_width=True)
+
+                    # ── Signal table ──────────────────────────────────────────
+                    st.markdown("#### 📋 FAI Supertrend Signal History")
+                    sig_rows = []
+                    for dt, row in fai_buys.iterrows():
+                        sig_rows.append({"Date": dt.strftime("%Y-%m-%d"), "Signal": "🟢 BUY",
+                                         "FAI": f"{row['FAI']:,.0f}",
+                                         "Index": f"{row['Index_Close']:,.0f}",
+                                         "VIX": f"{row['VIX_Close']:.2f}"})
+                    for dt, row in fai_sells.iterrows():
+                        sig_rows.append({"Date": dt.strftime("%Y-%m-%d"), "Signal": "🔴 SELL",
+                                         "FAI": f"{row['FAI']:,.0f}",
+                                         "Index": f"{row['Index_Close']:,.0f}",
+                                         "VIX": f"{row['VIX_Close']:.2f}"})
+                    if sig_rows:
+                        sig_df = pd.DataFrame(sig_rows).sort_values("Date", ascending=False).head(20)
+                        st.dataframe(sig_df, use_container_width=True, hide_index=True)
+                    else:
+                        st.info("No Supertrend flips in the current window.")
+
+                except Exception as e:
+                    st.error(f"FAI chart error: {e}")
+            else:
+                st.warning("⚠️ India VIX data unavailable — cannot build Fear-Adjusted Index.")
+            
         # ── Indicators Summary ────────────────────────────────────────────────
         st.markdown('<div class="sub-header">📋 Technical Indicators Summary</div>',
                     unsafe_allow_html=True)
