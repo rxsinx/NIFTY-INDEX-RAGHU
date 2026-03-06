@@ -1751,84 +1751,154 @@ def main():
                 st.warning("⚠️ India VIX data unavailable. yfinance may not have `^INDIAVIX` at this time.")
         
         with ct7:
-            st.markdown("### 🧮 Fear-Adjusted Index — Index × VIX Supertrend")
-            st.caption("FAI = Index Close × VIX Close. Supertrend applied to this composite "
-                       "to detect fear-adjusted trend regimes that raw price alone misses.")
+            st.markdown("### 🧮 Fear-Adjusted Index (FAI) — Index × VIX")
+            st.caption(
+                "**FAI = Index Close × VIX Close.** "
+                "Counter-intuitive but empirically validated: "
+                "**HIGH FAI = panic/fear peak = BULLISH reversal zone.** "
+                "**LOW FAI = complacency = BEARISH risk zone.** "
+                "HMM detects regime transitions on FAI. Supertrend confirms entry timing."
+            )
+
+            # ── Logic explainer ───────────────────────────────────────────────
+            with st.expander("📖 How to read FAI — Logic Explained", expanded=False):
+                st.markdown("""
+**Why HIGH FAI = Bullish opportunity (not bearish)?**
+
+When FAI spikes to high levels (e.g., >450,000 for NIFTY):
+- NIFTY has **fallen hard** → numerator is lower
+- VIX has **spiked sharply** → denominator is very high
+- Their product is large because **VIX spike dominates**
+- High VIX = **maximum fear / panic = market bottom**
+
+This is the classic "**Buy when there is blood in the streets**" signal.
+
+When FAI is very low (e.g., <300,000 for NIFTY):
+- NIFTY is at highs AND VIX is low → **everyone is complacent**
+- Low fear = **distribution zone** = market vulnerable to reversal
+
+**HMM States (3-regime Markov model on FAI returns):**
+| HMM State | FAI Level | Market Condition | Action |
+|-----------|-----------|-----------------|--------|
+| 🟢 HIGH | FAI > 75th pct | Panic / Fear peak | **BUY zone** — fear = opportunity |
+| 🟡 MID | FAI 25–75th pct | Transition / Recovery | Watch for direction |
+| 🔴 LOW | FAI < 25th pct | Complacency / Top | **CAUTION** — avoid longs |
+
+**Combined Signal (HMM + Supertrend on FAI):**
+| Zone | Meaning | Action |
+|------|---------|--------|
+| 🟢 PANIC BUY | HIGH FAI + ST flipped UP | Strongest buy signal |
+| 🟡 FEAR — WATCH ST | HIGH FAI + ST still down | Accumulate, wait for ST flip |
+| 🟢 RECOVERY | MID FAI + ST UP | Bullish continuation |
+| 🔴 DISTRIBUTION | MID FAI + ST DOWN | Reduce exposure |
+| 🔴 COMPLACENCY TOP | LOW FAI + ST DOWN | Dangerous — no fear cushion |
+| 🟡 CALM BULL | LOW FAI + ST UP | Ok but watch VIX |
+""")
+
             if vix_ok:
                 try:
                     fai_df  = build_fear_index(analyzer.data, vix_df)
                     fai_res = analyse_fai_regimes(fai_df)
+                    zone    = fai_res["current_zone"]
 
-                    # ── Current regime banner ─────────────────────────────────
-                    zone = fai_res["current_zone"]
-                    if zone == "BULLISH":
-                        st.success(f"🟢 **{zone}** — FAI Supertrend bullish, fear low. Healthy uptrend.")
-                    elif zone == "CAUTION":
-                        st.warning(f"🟡 **{zone}** — FAI Supertrend bullish BUT fear elevated. "
-                                   "Rally may be unsustainable; tighten stops.")
-                    elif zone == "EXTREME FEAR":
-                        st.error(f"🔴 **{zone}** — FAI at panic levels. "
-                                 "Potential capitulation / reversal zone. Watch for ST flip.")
+                    # ── Current regime banner ──────────────────────────────────
+                    if "PANIC BUY" in zone or "RECOVERY" in zone:
+                        st.success(f"**Current Regime: {zone}**  — FAI signals bullish reversal / recovery.")
+                    elif "COMPLACENCY" in zone or "DISTRIBUTION" in zone:
+                        st.error(f"**Current Regime: {zone}**  — FAI signals caution / distribution risk.")
                     else:
-                        st.error(f"🔴 **{zone}** — FAI Supertrend bearish. Downtrend confirmed.")
+                        st.warning(f"**Current Regime: {zone}**  — Transitional. Monitor FAI for next move.")
 
-                    # ── Key metrics ───────────────────────────────────────────
-                    f1, f2, f3, f4, f5 = st.columns(5)
-                    with f1: st.metric("FAI (Current)",   f"{fai_res['current_fai']:,.0f}")
-                    with f2: st.metric("FAI Supertrend",  f"{fai_res['st_level']:,.0f}")
-                    with f3: st.metric("FAI MA-20",       f"{fai_res['fai_ma']:,.0f}")
-                    with f4: st.metric("Bullish Zone",
-                                       f"{fai_res['bullish_lo']:,.0f} – {fai_res['bullish_hi']:,.0f}")
-                    with f5: st.metric("Bearish Zone",
-                                       f"{fai_res['bearish_lo']:,.0f} – {fai_res['bearish_hi']:,.0f}")
+                    # ── Key metrics row 1 ─────────────────────────────────────
+                    f1, f2, f3, f4, f5, f6 = st.columns(6)
+                    with f1:
+                        delta_col = "normal"
+                        st.metric("FAI Current", f"{fai_res['current_fai']:,.0f}")
+                    with f2:
+                        st.metric("FAI Supertrend", f"{fai_res['st_level']:,.0f}",
+                                  "↑ Bullish" if fai_res["st_direction"] == 1 else "↓ Bearish")
+                    with f3:
+                        st.metric("FAI MA-20", f"{fai_res['fai_ma20']:,.0f}")
+                    with f4:
+                        st.metric("Panic/Buy Level (75th %)",
+                                  f"{fai_res['panic_threshold']:,.0f}",
+                                  "✅ ABOVE — Buy zone" if fai_res["current_fai"] >= fai_res["panic_threshold"]
+                                  else "Below")
+                    with f5:
+                        st.metric("Complacency (25th %)",
+                                  f"{fai_res['complacency_threshold']:,.0f}",
+                                  "⚠️ BELOW — Risk zone" if fai_res["current_fai"] <= fai_res["complacency_threshold"]
+                                  else "Above")
+                    with f6:
+                        pct_rank = (fai_res["df"]["FAI"] <= fai_res["current_fai"]).mean() * 100
+                        st.metric("FAI Percentile", f"{pct_rank:.0f}th",
+                                  "Fear zone" if pct_rank > 75 else "Complacency" if pct_rank < 25 else "Normal")
 
-                    # ── Zone distribution table ───────────────────────────────
-                    st.markdown("#### 📊 Zone Distribution (last 252 days)")
-                    zone_counts = fai_res["df"].tail(252)["Zone"].value_counts()
-                    total = zone_counts.sum()
-                    zc1, zc2, zc3, zc4 = st.columns(4)
-                    zone_cols = {"BULLISH": (zc1, "🟢"), "CAUTION": (zc2, "🟡"),
-                                 "BEARISH": (zc3, "🔴"), "EXTREME FEAR": (zc4, "🟣")}
-                    for zn, (col, emo) in zone_cols.items():
-                        cnt = int(zone_counts.get(zn, 0))
-                        with col:
-                            st.metric(f"{emo} {zn}", f"{cnt/total*100:.1f}%", f"{cnt} days")
-
-                    # ── Reference guide ───────────────────────────────────────
-                    st.markdown("""
-| Zone | ST Dir | FAI vs MA-20 | Meaning | Action |
-|------|--------|-------------|---------|--------|
-| 🟢 Bullish | ↑ | Below | Calm uptrend, low fear | Hold longs |
-| 🟡 Caution | ↑ | Above | Rally with fear — unstable | Trail stops |
-| 🔴 Bearish | ↓ | Any | Downtrend confirmed | Reduce longs / hedge |
-| 🟣 Extreme Fear | ↓ | Top 10% | Panic / capitulation | Watch for ST flip → buy |
-""")
+                    # ── Zone distribution ─────────────────────────────────────
+                    st.markdown("#### 📊 HMM Regime Distribution (all history)")
+                    df_all   = fai_res["df"]
+                    zc_all   = df_all["Zone"].value_counts()
+                    total_all = zc_all.sum()
+                    all_zones = [
+                        "🟢 PANIC BUY", "🟡 FEAR — WATCH ST",
+                        "🟢 RECOVERY",  "🔴 DISTRIBUTION",
+                        "🔴 COMPLACENCY TOP", "🟡 CALM BULL"
+                    ]
+                    z_cols = st.columns(len(all_zones))
+                    for i, zn in enumerate(all_zones):
+                        cnt = int(zc_all.get(zn, 0))
+                        pct = cnt / total_all * 100 if total_all > 0 else 0
+                        with z_cols[i]:
+                            st.metric(zn.split(" ", 1)[1], f"{pct:.1f}%", f"{cnt}d",
+                                      delta_color="off")
 
                     # ── Chart ─────────────────────────────────────────────────
                     fai_fig, fai_buys, fai_sells = create_fai_chart(fai_res, index_name)
                     st.plotly_chart(fai_fig, use_container_width=True)
 
-                    # ── Signal table ──────────────────────────────────────────
-                    st.markdown("#### 📋 FAI Supertrend Signal History")
+                    # ── Signal history ────────────────────────────────────────
+                    st.markdown("#### 📋 FAI Supertrend Flip Signals (Index Buy/Sell)")
                     sig_rows = []
                     for dt, row in fai_buys.iterrows():
-                        sig_rows.append({"Date": dt.strftime("%Y-%m-%d"), "Signal": "🟢 BUY",
-                                         "FAI": f"{row['FAI']:,.0f}",
-                                         "Index": f"{row['Index_Close']:,.0f}",
-                                         "VIX": f"{row['VIX_Close']:.2f}"})
+                        hmm = str(row.get("HMM_Regime", "—"))
+                        quality = "🔥 STRONG" if hmm == "HIGH" else "✅ Normal"
+                        sig_rows.append({
+                            "Date": dt.strftime("%Y-%m-%d"),
+                            "Signal": "🟢 INDEX BUY",
+                            "Quality": quality,
+                            "FAI": f"{row['FAI']:,.0f}",
+                            "HMM Regime": hmm,
+                            "Index Close": f"{row['Index_Close']:,.0f}",
+                            "VIX": f"{row['VIX_Close']:.2f}",
+                        })
                     for dt, row in fai_sells.iterrows():
-                        sig_rows.append({"Date": dt.strftime("%Y-%m-%d"), "Signal": "🔴 SELL",
-                                         "FAI": f"{row['FAI']:,.0f}",
-                                         "Index": f"{row['Index_Close']:,.0f}",
-                                         "VIX": f"{row['VIX_Close']:.2f}"})
+                        hmm = str(row.get("HMM_Regime", "—"))
+                        quality = "🔥 STRONG" if hmm == "LOW" else "✅ Normal"
+                        sig_rows.append({
+                            "Date": dt.strftime("%Y-%m-%d"),
+                            "Signal": "🔴 INDEX SELL",
+                            "Quality": quality,
+                            "FAI": f"{row['FAI']:,.0f}",
+                            "HMM Regime": hmm,
+                            "Index Close": f"{row['Index_Close']:,.0f}",
+                            "VIX": f"{row['VIX_Close']:.2f}",
+                        })
                     if sig_rows:
-                        sig_df = pd.DataFrame(sig_rows).sort_values("Date", ascending=False).head(20)
+                        sig_df = (pd.DataFrame(sig_rows)
+                                  .sort_values("Date", ascending=False)
+                                  .head(25))
                         st.dataframe(sig_df, use_container_width=True, hide_index=True)
+                        st.caption(
+                            "🔥 STRONG signals = ST flip occurred while HMM was in "
+                            "HIGH regime (panic) for BUY, or LOW regime (complacency) for SELL."
+                        )
                     else:
-                        st.info("No Supertrend flips in the current window.")
+                        st.info("No Supertrend flips found in the loaded history.")
 
                 except Exception as e:
-                    st.error(f"FAI chart error: {e}")
+                    import traceback
+                    st.error(f"FAI analysis error: {e}")
+                    st.code(traceback.format_exc())
             else:
                 st.warning("⚠️ India VIX data unavailable — cannot build Fear-Adjusted Index.")
             
