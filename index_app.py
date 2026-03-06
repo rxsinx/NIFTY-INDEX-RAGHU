@@ -175,7 +175,7 @@ def create_adaptive_supertrend_chart(df_full, atr_period=10, n_clusters=3):
     fig = make_subplots(
         rows=4, cols=1, shared_xaxes=True,
         vertical_spacing=0.08,
-        row_heights=[0.60, 0.20, 0.15, 0.20],
+        row_heights=[0.50, 0.18, 0.14, 0.18],
         subplot_titles=(
             "🤖 AI Adaptive Supertrend — K-Means",
             "ATR by Volatility Regime",
@@ -277,7 +277,7 @@ def create_adaptive_supertrend_chart(df_full, atr_period=10, n_clusters=3):
 
     # ── Black background for rows 2 (ATR), 3 (Multiplier), 4 (Volume) ─────────
     
-    dark_tick  = dict(color="#cccccc")
+    dark_tick  = dict(color="#302f2f")
     dark_grid  = "#333333"
     dark_zero  = "#555555"
     dark_title = dict(color="#eeeeee", size=11)
