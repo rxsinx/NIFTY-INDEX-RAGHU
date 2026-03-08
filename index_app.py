@@ -1978,47 +1978,30 @@ When FAI is very low (e.g., <300,000 for NIFTY):
                                       delta_color="off")
 
                     # ── Chart ─────────────────────────────────────────────────
-                    fai_fig, fai_buys, fai_sells = create_fai_chart(fai_res, index_name)
+                    fai_fig = create_fai_chart(fai_res, index_name)
                     st.plotly_chart(fai_fig, use_container_width=True)
 
                     # ── Signal history ────────────────────────────────────────
-                    st.markdown("#### 📋 FAI Supertrend Flip Signals (Index Buy/Sell)")
-                    sig_rows = []
-                    for dt, row in fai_buys.iterrows():
-                        hmm = str(row.get("HMM_Regime", "—"))
-                        quality = "🔥 STRONG" if hmm == "HIGH" else "✅ Normal"
-                        sig_rows.append({
-                            "Date": dt.strftime("%Y-%m-%d"),
-                            "Signal": "🟢 INDEX BUY",
-                            "Quality": quality,
-                            "FAI": f"{row['FAI']:,.0f}",
-                            "HMM Regime": hmm,
+                    st.markdown("#### 📋 HMM Regime History — Recent Transitions")
+                    df_all = fai_res["df"]
+                    # Show last 25 rows with Zone + FAI + Index + VIX
+                    hist_rows = []
+                    for dt, row in df_all.tail(60).iterrows():
+                        hist_rows.append({
+                            "Date":        dt.strftime("%Y-%m-%d"),
+                            "Zone":        str(row["Zone"]),
+                            "HMM Regime":  str(row["HMM_Regime"]),
+                            "FAI":         f"{row['FAI']:,.0f}",
                             "Index Close": f"{row['Index_Close']:,.0f}",
-                            "VIX": f"{row['VIX_Close']:.2f}",
+                            "VIX":         f"{row['VIX_Close']:.2f}",
                         })
-                    for dt, row in fai_sells.iterrows():
-                        hmm = str(row.get("HMM_Regime", "—"))
-                        quality = "🔥 STRONG" if hmm == "LOW" else "✅ Normal"
-                        sig_rows.append({
-                            "Date": dt.strftime("%Y-%m-%d"),
-                            "Signal": "🔴 INDEX SELL",
-                            "Quality": quality,
-                            "FAI": f"{row['FAI']:,.0f}",
-                            "HMM Regime": hmm,
-                            "Index Close": f"{row['Index_Close']:,.0f}",
-                            "VIX": f"{row['VIX_Close']:.2f}",
-                        })
-                    if sig_rows:
-                        sig_df = (pd.DataFrame(sig_rows)
-                                  .sort_values("Date", ascending=False)
-                                  .head(25))
-                        st.dataframe(sig_df, use_container_width=True, hide_index=True)
-                        st.caption(
-                            "🔥 STRONG signals = ST flip occurred while HMM was in "
-                            "HIGH regime (panic) for BUY, or LOW regime (complacency) for SELL."
-                        )
-                    else:
-                        st.info("No Supertrend flips found in the loaded history.")
+                    hist_df = pd.DataFrame(hist_rows).sort_values("Date", ascending=False).head(25)
+                    st.dataframe(hist_df, use_container_width=True, hide_index=True)
+                    st.caption(
+                        "HMM regime is model-detected, not a fixed rule. "
+                        "🟢 HIGH regime (panic/fear) = historical buy zone. "
+                        "🔴 LOW regime (complacency) = historical caution zone."
+                    )
 
                 except Exception as e:
                     import traceback
