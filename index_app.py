@@ -891,8 +891,7 @@ def create_fai_chart(fai_result: dict, index_name: str) -> go.Figure:
     fig.update_yaxes(title_text="HMM State",   title_font=dict(size=10), row=4, col=1)
     fig.update_yaxes(title_text="ROC-10 (%)",  title_font=dict(size=10), row=5, col=1)
     fig = _style_subplot_titles(fig)
-    return fig, buys, sells
-
+    return fig
 # ============================================================================
 # INDEX ANALYZER CLASS
 # ============================================================================
