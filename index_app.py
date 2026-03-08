@@ -757,7 +757,7 @@ def create_fai_chart(fai_result: dict, index_name: str) -> go.Figure:
         vertical_spacing=0.05,
         row_heights=[0.38, 0.18, 0.14, 0.14, 0.16],
         subplot_titles=(
-            f"🧮 {index_name} × VIX — Fear Index + HMM Regimes + Supertrend",
+            f"🧮 {index_name} × VIX — Fear Index + HMM Regimes",
             f"📈 {index_name} Close",
             "😨 India VIX",
             "🤖 HMM Regime (LOW=Danger / HIGH=Opportunity)",
@@ -799,13 +799,7 @@ def create_fai_chart(fai_result: dict, index_name: str) -> go.Figure:
     fig.add_trace(go.Scatter(x=df.index, y=df["FAI_MA50"], name="MA-50",
                               line=dict(color="#7c3aed", width=1.2, dash="dot")), row=1, col=1)
 
-    # Supertrend
-    bull_st = st_s.where(direction == 1)
-    bear_st = st_s.where(direction == -1)
-    fig.add_trace(go.Scatter(x=df.index, y=bull_st, name="ST ↑ (Buy FAI)",
-                              line=dict(color="#16a34a", width=2.5), mode="lines"), row=1, col=1)
-    fig.add_trace(go.Scatter(x=df.index, y=bear_st, name="ST ↓ (Sell FAI)",
-                              line=dict(color="#dc2626", width=2.5), mode="lines"), row=1, col=1)
+   
 
     # KEY threshold lines — CORRECTED meaning
     fig.add_hrect(
@@ -833,27 +827,7 @@ def create_fai_chart(fai_result: dict, index_name: str) -> go.Figure:
                   annotation_font=dict(color="#b91c1c", size=10),
                   annotation_position="right", row=1, col=1)
 
-    # ST flip signals on FAI — CORRECTED: ST flip UP after HIGH FAI = BUY
-    buys  = df[(direction == 1)  & (direction.shift(1) == -1)]
-    sells = df[(direction == -1) & (direction.shift(1) ==  1)]
-    if not buys.empty:
-        fig.add_trace(go.Scatter(
-            x=buys.index, y=buys["FAI"] * 0.992,
-            mode="markers+text",
-            marker=dict(symbol="triangle-up", size=14, color="#16a34a",
-                        line=dict(color="white", width=1)),
-            text=["INDEX BUY"] * len(buys), textposition="bottom center",
-            textfont=dict(color="#15803d", size=8), name="Index BUY Signal"
-        ), row=1, col=1)
-    if not sells.empty:
-        fig.add_trace(go.Scatter(
-            x=sells.index, y=sells["FAI"] * 1.008,
-            mode="markers+text",
-            marker=dict(symbol="triangle-down", size=14, color="#dc2626",
-                        line=dict(color="white", width=1)),
-            text=["INDEX SELL"] * len(sells), textposition="top center",
-            textfont=dict(color="#b91c1c", size=8), name="Index SELL Signal"
-        ), row=1, col=1)
+    
             
     # ── Row 2: Index Close ────────────────────────────────────────────────────
     fig.add_trace(go.Scatter(
@@ -1236,7 +1210,7 @@ def create_candlestick_chart(analyzer: IndexAnalyzer, patterns=None):
     fig.add_trace(go.Scatter(x=df.index, y=df["Stoch_K"], name="Stoch %K",
                               line=dict(color="#f97316", width=1.5)), row=3, col=1)
     fig.add_trace(go.Scatter(x=df.index, y=df["Stoch_D"], name="Stoch %D",
-                              line=dict(color="#f52516", width=1.5, dash="dot")), row=3, col=1)
+                              line=dict(color="#0f0f0f", width=1.5, dash="dot")), row=3, col=1)
     for lvl, clr, dash in [(70, "#dc2626", "dash"), (30, "#16a34a", "dash"),
                             (80, "#7f1d1d", "dot"),  (20, "#14532d", "dot")]:
         fig.add_hline(y=lvl, line_dash=dash, line_color=clr, line_width=0.8,
