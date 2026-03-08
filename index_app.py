@@ -738,41 +738,42 @@ def analyse_fai_regimes(df: pd.DataFrame) -> dict:
         complacency_threshold=complacency_threshold,
     )
 
-
 def create_fai_chart(fai_result: dict, index_name: str) -> go.Figure:
     """
-    5-panel Fear-Adjusted Index chart with corrected logic:
-      Row 1 : FAI + Supertrend + HMM regime coloring + threshold bands
-      Row 2 : NIFTY Close (to compare vs FAI)
-      Row 3 : VIX (color-coded)
-      Row 4 : HMM regime state (LOW/MID/HIGH) over time
-      Row 5 : FAI ROC-10 momentum
+    4-panel Fear-Adjusted Index chart — clean, no Supertrend clutter:
+      Row 1 : FAI + HMM zone shading + MA-20/50 + threshold bands
+      Row 2 : NIFTY (left axis) x VIX (right axis) — clear dual-axis relationship
+      Row 3 : HMM regime state bar (LOW=Danger / HIGH=Opportunity)
+      Row 4 : FAI ROC-10 momentum
     """
-    df        = fai_result["df"].tail(500)   # ~2 years for context
-    st_s      = df["ST"]
-    direction = df["ST_Dir"]
+    df = fai_result["df"].tail(500)   # ~2 years for context
 
     fig = make_subplots(
-        rows=5, cols=1, shared_xaxes=True,
-        vertical_spacing=0.05,
-        row_heights=[0.38, 0.18, 0.14, 0.14, 0.16],
+        rows=4, cols=1, shared_xaxes=True,
+        vertical_spacing=0.06,
+        row_heights=[0.38, 0.28, 0.18, 0.16],
         subplot_titles=(
-            f"🧮 {index_name} × VIX — Fear Index + HMM Regimes",
-            f"📈 {index_name} Close",
-            "😨 India VIX",
-            "🤖 HMM Regime (LOW=Danger / HIGH=Opportunity)",
+            f"🧮 {index_name} x VIX — Fear-Adjusted Index + HMM Regime Zones",
+            f"📈 {index_name} (left axis)   😨 India VIX (right axis) — The Core Relationship",
+            "🤖 HMM Regime State   🟢 HIGH = Fear = Buy   |   🔴 LOW = Complacency = Caution",
             "⚡ FAI Momentum (ROC-10)"
-        )
+        ),
+        specs=[
+            [{"secondary_y": False}],
+            [{"secondary_y": True}],
+            [{"secondary_y": False}],
+            [{"secondary_y": False}],
+        ]
     )
 
-    # ── Zone background shading ───────────────────────────────────────────────
+    # ── Row 1: HMM zone background shading ───────────────────────────────────
     zone_clr = {
-        "🟢 PANIC BUY":       "rgba(22,163,74,0.10)",
-        "🟡 FEAR — WATCH ST": "rgba(234,179,8,0.08)",
-        "🟢 RECOVERY":        "rgba(22,163,74,0.06)",
-        "🔴 DISTRIBUTION":    "rgba(220,38,38,0.07)",
-        "🔴 COMPLACENCY TOP": "rgba(127,29,29,0.10)",
-        "🟡 CALM BULL":       "rgba(59,130,246,0.05)",
+        "🟢 PANIC BUY":       "rgba(22,163,74,0.13)",
+        "🟡 FEAR — WATCH ST": "rgba(234,179,8,0.09)",
+        "🟢 RECOVERY":        "rgba(22,163,74,0.07)",
+        "🔴 DISTRIBUTION":    "rgba(220,38,38,0.08)",
+        "🔴 COMPLACENCY TOP": "rgba(127,29,29,0.13)",
+        "🟡 CALM BULL":       "rgba(59,130,246,0.06)",
     }
     prev_zone, seg_start = df["Zone"].iloc[0], df.index[0]
     for dt, row in df.iterrows():
@@ -786,98 +787,108 @@ def create_fai_chart(fai_result: dict, index_name: str) -> go.Figure:
                   fillcolor=zone_clr.get(prev_zone, "rgba(200,200,200,0.04)"),
                   layer="below", line_width=0, row=1, col=1)
 
-    # FAI line
+    # FAI line — bold and clear
     fig.add_trace(go.Scatter(
         x=df.index, y=df["FAI"], name="FAI (Index×VIX)",
-        line=dict(color="#2563eb", width=2),
+        line=dict(color="#1d4ed8", width=2.5),
         hovertemplate="FAI: %{y:,.0f}<extra></extra>"
     ), row=1, col=1)
 
-    # MA bands
-    fig.add_trace(go.Scatter(x=df.index, y=df["FAI_MA20"], name="MA-20",
-                              line=dict(color="#ca8a04", width=1.2, dash="dash")), row=1, col=1)
-    fig.add_trace(go.Scatter(x=df.index, y=df["FAI_MA50"], name="MA-50",
-                              line=dict(color="#7c3aed", width=1.2, dash="dot")), row=1, col=1)
+    # MA-20 and MA-50 — subtle guides only
+    fig.add_trace(go.Scatter(x=df.index, y=df["FAI_MA20"], name="FAI MA-20",
+                              line=dict(color="#d97706", width=1.3, dash="dash"),
+                              hovertemplate="MA20: %{y:,.0f}<extra></extra>"), row=1, col=1)
+    fig.add_trace(go.Scatter(x=df.index, y=df["FAI_MA50"], name="FAI MA-50",
+                              line=dict(color="#7c3aed", width=1.3, dash="dot"),
+                              hovertemplate="MA50: %{y:,.0f}<extra></extra>"), row=1, col=1)
 
-   
-
-    # KEY threshold lines — CORRECTED meaning
+    # Fear / Complacency threshold bands
     fig.add_hrect(
         y0=fai_result["bullish_lo"], y1=fai_result["bullish_hi"],
-        fillcolor="rgba(22,163,74,0.06)", line_width=0.8, line_color="#16a34a",
-        annotation_text="🟢 FEAR ZONE — Buy Opportunity",
+        fillcolor="rgba(22,163,74,0.08)", line_width=1, line_color="#16a34a",
+        annotation_text="🟢 FEAR / BUY ZONE (75th-90th pct)",
         annotation_position="right",
         annotation_font=dict(color="#15803d", size=9), row=1, col=1
     )
     fig.add_hrect(
         y0=fai_result["bearish_lo"], y1=fai_result["bearish_hi"],
-        fillcolor="rgba(220,38,38,0.06)", line_width=0.8, line_color="#dc2626",
-        annotation_text="🔴 COMPLACENCY ZONE — Caution",
+        fillcolor="rgba(220,38,38,0.08)", line_width=1, line_color="#dc2626",
+        annotation_text="🔴 COMPLACENCY / CAUTION (10th-25th pct)",
         annotation_position="right",
         annotation_font=dict(color="#b91c1c", size=9), row=1, col=1
     )
     fig.add_hline(y=fai_result["panic_threshold"],
-                  line_dash="dash", line_color="#16a34a", line_width=1.5,
-                  annotation_text=f"Panic/Buy Level: {fai_result['panic_threshold']:,.0f}",
-                  annotation_font=dict(color="#15803d", size=10),
-                  annotation_position="right", row=1, col=1)
+                  line_dash="dash", line_color="#16a34a", line_width=1.2,
+                  annotation_text=f"Buy Threshold (90th pct): {fai_result['panic_threshold']:,.0f}",
+                  annotation_font=dict(color="#15803d", size=9),
+                  annotation_position="left", row=1, col=1)
     fig.add_hline(y=fai_result["complacency_threshold"],
-                  line_dash="dash", line_color="#dc2626", line_width=1.5,
-                  annotation_text=f"Complacency/Sell Level: {fai_result['complacency_threshold']:,.0f}",
-                  annotation_font=dict(color="#b91c1c", size=10),
-                  annotation_position="right", row=1, col=1)
+                  line_dash="dash", line_color="#dc2626", line_width=1.2,
+                  annotation_text=f"Caution Threshold (25th pct): {fai_result['complacency_threshold']:,.0f}",
+                  annotation_font=dict(color="#b91c1c", size=9),
+                  annotation_position="left", row=1, col=1)
 
-    
-            
-    # ── Row 2: Index Close ────────────────────────────────────────────────────
+    # ── Row 2: NIFTY (left) + VIX (right) — clean dual-axis ─────────────────
     fig.add_trace(go.Scatter(
         x=df.index, y=df["Index_Close"], name=index_name,
-        line=dict(color="#2563eb", width=1.8),
+        line=dict(color="#2563eb", width=2.2),
         hovertemplate=f"{index_name}: %{{y:,.0f}}<extra></extra>"
-    ), row=2, col=1)
+    ), row=2, col=1, secondary_y=False)
 
-    # ── Row 3: VIX bar ───────────────────────────────────────────────────────
-    vix_c = ["#16a34a" if v < 15 else "#ca8a04" if v < 20
-              else "#f97316" if v < 25 else "#dc2626" for v in df["VIX_Close"]]
-    fig.add_trace(go.Bar(
-        x=df.index, y=df["VIX_Close"], name="VIX",
-        marker_color=vix_c, opacity=0.8,
+    fig.add_trace(go.Scatter(
+        x=df.index, y=df["VIX_Close"], name="India VIX",
+        line=dict(color="#dc2626", width=1.8, dash="dot"),
         hovertemplate="VIX: %{y:.2f}<extra></extra>"
-    ), row=3, col=1)
-    for lvl, clr in [(15, "#16a34a"), (20, "#ca8a04"), (25, "#dc2626")]:
-        fig.add_hline(y=lvl, line_dash="dash", line_color=clr, line_width=0.8,
-                      annotation_text=str(lvl), annotation_font=dict(size=8),
-                      annotation_position="right", row=3, col=1)
-    
-    # ── Row 4: HMM regime bar (LOW=red danger, MID=yellow, HIGH=green buy) ───────
+    ), row=2, col=1, secondary_y=True)
+
+    # VIX fear-zone shading on right axis
+    for lo, hi, clr in [
+        (0,  15,   "rgba(22,163,74,0.04)"),
+        (15, 20,   "rgba(234,179,8,0.04)"),
+        (20, 25,   "rgba(249,115,22,0.05)"),
+        (25, 9999, "rgba(220,38,38,0.07)"),
+    ]:
+        fig.add_hrect(y0=lo, y1=min(hi, float(df["VIX_Close"].max()) * 1.15),
+                      fillcolor=clr, line_width=0,
+                      row=2, col=1, secondary_y=True)
+
+    for lvl, clr, lbl in [(15, "#16a34a", "VIX 15"), (20, "#ca8a04", "VIX 20"),
+                            (25, "#dc2626", "VIX 25")]:
+        fig.add_hline(y=lvl, line_dash="dash", line_color=clr, line_width=1,
+                      annotation_text=lbl, annotation_font=dict(size=9, color=clr),
+                      annotation_position="right", row=2, col=1, secondary_y=True)
+
+    # ── Row 3: HMM regime bar ─────────────────────────────────────────────────
     hmm_num = df["HMM_Regime"].map({"LOW": -1, "MID": 0, "HIGH": 1}).fillna(0)
     hmm_clr = ["#dc2626" if v == -1 else "#ca8a04" if v == 0 else "#16a34a"
                for v in hmm_num]
     fig.add_trace(go.Bar(
-        x=df.index, y=hmm_num, name="HMM State",
-        marker_color=hmm_clr, opacity=0.8,
-        hovertemplate="HMM: %{text}<extra></extra>",
+        x=df.index, y=hmm_num, name="HMM Regime",
+        marker_color=hmm_clr, opacity=0.85,
+        hovertemplate="Regime: %{text}<extra></extra>",
         text=df["HMM_Regime"].values
-    ), row=4, col=1)
-    fig.add_hline(y=0, line_dash="solid", line_color="#888", line_width=0.8, row=4, col=1)
-    # Annotations
-    fig.add_annotation(x=df.index[-1], y=1,   text="HIGH=Buy",  font=dict(size=8, color="#15803d"), showarrow=False, xref="x4", yref="y4")
-    fig.add_annotation(x=df.index[-1], y=-1,  text="LOW=Sell",  font=dict(size=8, color="#b91c1c"), showarrow=False, xref="x4", yref="y4")
+    ), row=3, col=1)
+    fig.add_hline(y=0, line_dash="solid", line_color="#888", line_width=0.8, row=3, col=1)
+    fig.add_annotation(x=df.index[10], y=0.82, text="🟢 HIGH — Panic/Fear = Buy Opportunity",
+                       font=dict(size=9, color="#15803d"), showarrow=False,
+                       xref="x3", yref="y3")
+    fig.add_annotation(x=df.index[10], y=-0.82, text="🔴 LOW — Complacency = Caution/Sell",
+                       font=dict(size=9, color="#b91c1c"), showarrow=False,
+                       xref="x3", yref="y3")
 
-                       
-    # ── Row 5: FAI ROC-10 ────────────────────────────────────────────────────
+    # ── Row 4: FAI ROC-10 momentum ────────────────────────────────────────────
     roc   = df["FAI"].pct_change(10) * 100
     roc_c = ["#16a34a" if v >= 0 else "#dc2626" for v in roc.fillna(0)]
     fig.add_trace(go.Bar(
         x=df.index, y=roc, name="FAI ROC-10",
         marker_color=roc_c, opacity=0.75,
         hovertemplate="ROC-10: %{y:.2f}%<extra></extra>"
-    ), row=5, col=1)
-    fig.add_hline(y=0, line_dash="solid", line_color="#888", line_width=1, row=5, col=1)
+    ), row=4, col=1)
+    fig.add_hline(y=0, line_dash="solid", line_color="#888", line_width=1, row=4, col=1)
 
     # ── Layout ────────────────────────────────────────────────────────────────
     fig.update_layout(
-        height=1100, hovermode="x unified", showlegend=True,
+        height=1050, hovermode="x unified", showlegend=True,
         legend=dict(orientation="h", yanchor="bottom", y=1.01,
                     xanchor="right", x=1,
                     bgcolor="rgba(255,255,255,0.9)", bordercolor="#ddd", borderwidth=1),
@@ -885,13 +896,19 @@ def create_fai_chart(fai_result: dict, index_name: str) -> go.Figure:
     )
     fig.update_xaxes(**AXIS_STYLE, tickfont=dict(color="#111111", size=11))
     fig.update_yaxes(**AXIS_STYLE, tickfont=dict(color="#111111", size=11))
-    fig.update_yaxes(title_text="FAI",         title_font=dict(size=10), row=1, col=1)
-    fig.update_yaxes(title_text=index_name,    title_font=dict(size=10), row=2, col=1)
-    fig.update_yaxes(title_text="VIX",         title_font=dict(size=10), row=3, col=1)
-    fig.update_yaxes(title_text="HMM State",   title_font=dict(size=10), row=4, col=1)
-    fig.update_yaxes(title_text="ROC-10 (%)",  title_font=dict(size=10), row=5, col=1)
+    fig.update_yaxes(title_text="FAI (Index × VIX)",
+                     title_font=dict(size=10), row=1, col=1)
+    fig.update_yaxes(title_text=f"{index_name}",
+                     title_font=dict(color="#2563eb", size=10),
+                     row=2, col=1, secondary_y=False)
+    fig.update_yaxes(title_text="India VIX",
+                     title_font=dict(color="#dc2626", size=10),
+                     row=2, col=1, secondary_y=True, showgrid=False)
+    fig.update_yaxes(title_text="HMM State",  title_font=dict(size=10), row=3, col=1)
+    fig.update_yaxes(title_text="ROC-10 (%)", title_font=dict(size=10), row=4, col=1)
     fig = _style_subplot_titles(fig)
     return fig
+        
 # ============================================================================
 # INDEX ANALYZER CLASS
 # ============================================================================
@@ -1865,7 +1882,7 @@ def main():
                 "Counter-intuitive but empirically validated: "
                 "**HIGH FAI = panic/fear peak = BULLISH reversal zone.** "
                 "**LOW FAI = complacency = BEARISH risk zone.** "
-                "HMM detects regime transitions on FAI. Supertrend confirms entry timing."
+                "HMM detects regime transitions on FAI"
             )
 
             # ── Logic explainer ───────────────────────────────────────────────
